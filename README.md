@@ -1,7 +1,7 @@
 > **(WIP)** This project is still in early development.
 
-Meow
-====
+Madoka Scheme
+=============
 
 ![GitHub Actions: Rust CI][ci-badge] [![License: MPL-2.0][mpl-badge]][mpl-url]
 
