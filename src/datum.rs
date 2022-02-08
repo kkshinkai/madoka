@@ -5,7 +5,7 @@ use crate::tokens::Token;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Datum {
     Single(Token),
-    List(Vec<Token>),
+    List(Vec<Datum>),
 }
 
 impl Display for Datum {
