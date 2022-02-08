@@ -3,3 +3,6 @@
 
 # Ignore the Cargo (Rust) target directory.
 /target
+
+# Ignore the VS Code configuration directory.
+.vscode
