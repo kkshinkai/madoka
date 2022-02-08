@@ -12,6 +12,7 @@ pub enum TokenKind {
     String(String),
     Number(f64),
     Bool(bool),
+    Ident(String),
 
     BadToken,
 }

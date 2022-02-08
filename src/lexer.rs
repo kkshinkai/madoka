@@ -61,6 +61,7 @@ impl<'a> Iterator for Lexer<'a> {
                 ' ' | '\t' | '\n' | '\r' => { self.pick(); },
                 '"' => return Some(self.lex_string_literal()),
                 '#' => return Some(self.lex_number_sign_literals()),
+                c if is_identifier(c) => return Some(self.lex_identifier()),
                 _ => unimplemented!(),
             }
         }
@@ -68,7 +69,29 @@ impl<'a> Iterator for Lexer<'a> {
     }
 }
 
+fn is_identifier(c: char) -> bool {
+    c.is_alphabetic() || "!$%&*/:<=>?@^_~+-.".contains(c)
+}
+
 impl<'a> Lexer<'a> {
+    fn lex_identifier(&mut self) -> Token {
+        let mut result = String::new();
+        while let Some(char) = self.peek() {
+            match char {
+                // Delimiter
+                '(' | ')' | '[' | ']' | '{' | '}' | ';'
+                | '\'' | '"' | ' ' | '\t' | '\n' | '\r' => break,
+                _ => result.push(self.pick().unwrap()),
+            }
+        }
+
+        Token {
+            kind: TokenKind::Ident(result),
+            span: self.take_span(),
+        }
+    }
+
+
     fn lex_string_literal(&mut self) -> Token {
         assert_eq!(self.pick(), Some('"'));
 
