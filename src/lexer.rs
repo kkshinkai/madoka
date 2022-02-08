@@ -58,8 +58,9 @@ impl<'a> Iterator for Lexer<'a> {
                 },
                 '[' | ']' | '{' | '}' => unimplemented!(),
 
+                ' ' | '\t' | '\n' | '\r' => { self.pick(); },
                 '"' => return Some(self.lex_string_literal()),
-                ' ' => { self.pick(); },
+                '#' => return Some(self.lex_number_sign_literals()),
                 _ => unimplemented!(),
             }
         }
@@ -111,6 +112,54 @@ impl<'a> Lexer<'a> {
         // No end quotes (`"`) found until the end of the file.
         return Token {
             kind: TokenKind::BadToken,
+            span: self.take_span(),
+        };
+    }
+
+    fn lex_number_sign_literals(&mut self) -> Token {
+        assert_eq!(self.pick(), Some('#'));
+
+        let mut result = String::new();
+        while let Some(char) = self.peek() {
+            match char {
+                // Delimiter
+                '(' | ')' | '[' | ']' | '{' | '}'
+                | '\'' | '"' | ' ' | '\t' | '\n' | '\r' => break,
+                _ => result.push(self.pick().unwrap()),
+            }
+        }
+
+        return Token {
+            kind: match result.as_str() {
+                "" => {
+                    println!("A single `#` is not a valid symbol, do you means \
+                              `#t` of `#f`?");
+                    TokenKind::BadToken
+                },
+                "t" | "true" => TokenKind::Bool(true),
+                "f" | "false" => TokenKind::Bool(false),
+                str => {
+                    if str.chars().next() == Some('\\') {
+                        match &str[1..] {
+                            "alarm" => TokenKind::Char('\x07'),
+                            "backspace" => TokenKind::Char('\x08'),
+                            "delete" => TokenKind::Char('\x7f'),
+                            "escape" => TokenKind::Char('\x1b'),
+                            "newline" => TokenKind::Char('\n'),
+                            "null" => TokenKind::Char('\0'),
+                            "return" => TokenKind::Char('\r'),
+                            "space" => TokenKind::Char(' '),
+                            "tab" => TokenKind::Char('\t'),
+                            "" => TokenKind::BadToken,
+                            c if c.len() == 1 =>
+                                TokenKind::Char(c.chars().next().unwrap()),
+                            _ => TokenKind::BadToken,
+                        }
+                    } else {
+                        TokenKind::BadToken
+                    }
+                }
+            },
             span: self.take_span(),
         };
     }

@@ -4,7 +4,6 @@ mod tokens;
 mod lexer;
 
 fn main() {
-    let mut tokens = Lexer::new("( \"asdas\"");
-    println!("{:?}", tokens.next());
+    let tokens = Lexer::new(r##""asdas" #\x #\alarm #true #f"##);
     tokens.for_each(|t| println!("{:?}", t));
 }
