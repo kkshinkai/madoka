@@ -62,6 +62,7 @@ impl<'a> Iterator for Lexer<'a> {
                 '"' => return Some(self.lex_string_literal()),
                 '#' => return Some(self.lex_number_sign_literals()),
                 c if is_identifier(c) => return Some(self.lex_identifier()),
+                c if is_number(c) => return Some(self.lex_number()),
                 _ => unimplemented!(),
             }
         }
@@ -71,6 +72,10 @@ impl<'a> Iterator for Lexer<'a> {
 
 fn is_identifier(c: char) -> bool {
     c.is_alphabetic() || "!$%&*/:<=>?@^_~+-.".contains(c)
+}
+
+fn is_number(c: char) -> bool {
+    c.is_digit(10)
 }
 
 impl<'a> Lexer<'a> {
@@ -87,6 +92,27 @@ impl<'a> Lexer<'a> {
 
         Token {
             kind: TokenKind::Ident(result),
+            span: self.take_span(),
+        }
+    }
+
+    fn lex_number(&mut self) -> Token {
+        let mut result = String::new();
+        while let Some(char) = self.peek() {
+            match char {
+                // Delimiter
+                '(' | ')' | '[' | ']' | '{' | '}' | ';'
+                | '\'' | '"' | ' ' | '\t' | '\n' | '\r' => break,
+                _ => result.push(self.pick().unwrap()),
+            }
+        }
+
+        Token {
+            kind: if let Ok(num) = result.parse::<f64>() {
+                TokenKind::Number(num)
+            } else {
+                TokenKind::BadToken
+            },
             span: self.take_span(),
         }
     }
