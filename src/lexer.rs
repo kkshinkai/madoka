@@ -3,7 +3,6 @@ use std::iter::Peekable;
 use crate::tokens::{Token, Span, TokenKind};
 
 pub struct Lexer<'a> {
-    src: &'a str,
     curr_pos: usize,
     chars: Peekable<std::str::Chars<'a>>,
     curr_span: Span,
@@ -12,7 +11,6 @@ pub struct Lexer<'a> {
 impl<'a> Lexer<'a> {
     pub fn new(src: &'a str) -> Self {
         Lexer {
-            src,
             curr_pos: 0,
             chars: src.chars().peekable(),
             curr_span: Span::new(0, 0),
