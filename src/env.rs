@@ -20,6 +20,10 @@ impl Env {
         None
     }
 
+    pub fn define(&mut self, symbol: String, value: Value) {
+        self.frames.last_mut().unwrap().define(symbol, value);
+    }
+
     pub fn enter_frame(&mut self) {
         self.frames.push(Frame::new());
     }

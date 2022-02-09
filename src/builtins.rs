@@ -9,18 +9,19 @@ pub enum Value {
     Procedure(Procedure),
     BuiltinProcedure(BuiltinProcedure),
     Primitive(Primitive),
+    Void,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Procedure {
-    params: Vec<String>,
-    body: Vec<Datum>,
+    pub params: Vec<String>,
+    pub body: Datum,
 }
 
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuiltinProcedure {
-    native: fn(Vec<Value>) -> Value,
+    pub native: fn(Vec<Value>) -> Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
