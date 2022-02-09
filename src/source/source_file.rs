@@ -9,7 +9,7 @@ pub struct SourceFile {
     path: FilePath,
 
     /// The source code in the file.
-    src: Rc<String>,
+    pub src: Rc<String>,
 
     /// The start position of this source in the file.
     ///

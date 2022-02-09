@@ -1,6 +1,6 @@
 use std::{rc::Rc, io, fs, path::PathBuf};
 
-use super::{source_file::{SourceFile, FilePath}, BytePos, loc::Loc};
+use super::{source_file::{SourceFile, FilePath}, BytePos, loc::Loc, span::Span};
 
 pub struct SourceMgr {
     /// The used byte position range.
@@ -83,6 +83,13 @@ impl SourceMgr {
             .unwrap_or_else(|p| p - 1);
         self.files[idx].clone()
     }
+
+    /// Returns the source file at the given span.
+    pub fn lookup_source(&self, span: Span) -> String {
+        self.lookup_file(span.start())
+            .src[span.start().to_usize()..span.end().to_usize()]
+            .to_string()
+    }
 }
 
 #[cfg(test)]
@@ -131,5 +138,19 @@ mod tests {
         assert_eq!(loc.line(), 2);
         assert_eq!(loc.col(), CharPos::from_usize(1));
         assert_eq!(loc.col_display(), 2);
+    }
+
+    #[test]
+    fn test_lookup_source() {
+        let mut mgr = SourceMgr::new();
+        mgr.load_virtual_file(
+            "example".to_string(),
+            "abcdefghijklmn".to_string(),
+        );
+
+        let str = mgr.lookup_source(
+            Span::new(BytePos::from_usize(3), BytePos::from_usize(7))
+        );
+        assert_eq!(str, "defg");
     }
 }
