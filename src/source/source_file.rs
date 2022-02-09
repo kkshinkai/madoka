@@ -95,7 +95,7 @@ pub struct NonNarrowChar {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NonNarrowCharKind {
+enum NonNarrowCharKind {
     /// A zero-width character.
     ZeroWidth,
 
@@ -112,7 +112,7 @@ impl NonNarrowChar {
     pub fn new(pos: BytePos, width: usize) -> Self {
         let kind = match width {
             0 => NonNarrowCharKind::ZeroWidth,
-            1 => NonNarrowCharKind::Wide,
+            2 => NonNarrowCharKind::Wide,
             _ => NonNarrowCharKind::Tab,
         };
         NonNarrowChar { pos, kind }
@@ -124,15 +124,9 @@ impl NonNarrowChar {
         self.pos
     }
 
-    /// Returns the kind of this character.
-    #[inline]
-    pub fn kind(&self) -> NonNarrowCharKind {
-        self.kind
-    }
-
     /// Returns the width of this character.
     pub fn width(&self) -> usize {
-        match self.kind() {
+        match self.kind {
             NonNarrowCharKind::ZeroWidth => 0,
             NonNarrowCharKind::Wide => 1,
             NonNarrowCharKind::Tab => 4,
