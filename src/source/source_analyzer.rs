@@ -119,4 +119,6 @@ mod tests {
                 .collect::<Vec<_>>()
         );
     }
+
+    // TODO: Test multi-byte characters and non-narrow characters.
 }
