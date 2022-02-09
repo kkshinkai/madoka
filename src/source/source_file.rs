@@ -43,20 +43,18 @@ pub struct SourceFile {
 
 impl SourceFile {
     /// Creates a new source file from the given path.
-    pub fn new(path: FilePath, start_pos: BytePos) -> io::Result<SourceFile> {
-        let src = path.load()?;
+    pub fn new(
+        path: FilePath,
+        start_pos: BytePos,
+        src: Rc<String>,
+    ) -> SourceFile {
         let end_pos = start_pos.offset(src.len() as isize);
         let (lines, multi_byte_chars, non_narrow_chars) =
             source_analyzer::analyze(&src, start_pos);
-        Ok(SourceFile {
-            src: Rc::new(src),
-            path,
-            start_pos,
-            end_pos,
-            lines,
-            multi_byte_chars,
-            non_narrow_chars,
-        })
+        SourceFile {
+            src, path, start_pos, end_pos, lines,
+            multi_byte_chars, non_narrow_chars,
+        }
     }
 }
 
@@ -70,21 +68,10 @@ pub enum FilePath {
     Local(PathBuf),
 
     /// The path to a virtual file, mostly for testing.
-    Virtual { name: String, src: String },
+    Virtual(String),
 
     /// The source code read from REPL.
-    Repl(String),
-}
-
-impl FilePath {
-    /// Reads the source code from a file.
-    pub fn load(&self) -> io::Result<String> {
-        match self {
-            FilePath::Local(path) => fs::read_to_string(path),
-            FilePath::Virtual { name: _, src } => Ok(src.clone()),
-            FilePath::Repl(src) => Ok(src.clone()),
-        }
-    }
+    Repl,
 }
 
 /// Represents a multi-byte UTF-8 unicode scalar in the source code.
