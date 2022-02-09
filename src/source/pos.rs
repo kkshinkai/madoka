@@ -60,3 +60,30 @@ mod byte_pos_tests {
         assert_eq!(pos.inc(), BytePos::from_usize(11));
     }
 }
+
+/// Represents a position counted by character.
+///
+/// The name "CharPos" can be a bit confusing. It looks intrinsically related to
+/// [`BytePos`], but they are actually quite different. [`CharPos`] is not a
+/// global locator, it is often used to represent a column counted by
+/// characters (not bytes). It is just a wrapper for the [`usize`] column
+/// number.
+///
+/// It may be 0-based or 1-based, depending on the users.
+pub struct CharPos {
+    pos: usize,
+}
+
+impl CharPos {
+    /// Creates a new [`CharPos`] from usize.
+    #[inline]
+    pub fn from_usize(pos: usize) -> Self {
+        CharPos { pos }
+    }
+
+    /// Returns the inner usize of the [`CharPos`].
+    #[inline]
+    pub fn to_usize(&self) -> usize {
+        self.pos
+    }
+}
