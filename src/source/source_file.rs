@@ -20,7 +20,7 @@ pub struct SourceFile {
 
     /// Caches the start of each line in the source file.
     ///
-    /// According to R7RS, line breaks include carriage return (CR, `\r`,
+    /// According to R7RS, line breaks include carriage return (CR, `\r`),
     /// line feed (LF, `\n`), and carriage return followed by line feed (CRLF,
     /// `\r\n`). These three line breaks can be mixed in the same file (although
     /// this is a bad practice).
