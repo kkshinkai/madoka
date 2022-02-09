@@ -3,6 +3,7 @@ use std::{path::PathBuf, rc::Rc, io, fs::{File, self}};
 use super::{BytePos, source_analyzer};
 
 /// Represents a source file.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceFile {
     /// The path to the source file.
     path: FilePath,

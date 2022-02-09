@@ -70,6 +70,7 @@ mod byte_pos_tests {
 /// number.
 ///
 /// It may be 0-based or 1-based, depending on the users.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CharPos {
     pos: usize,
 }
