@@ -17,7 +17,7 @@ fn main() {
 
     env.enter_frame();
     env.define("define".to_string(), Value::Primitive(Primitive::Define));
-    env.define("set".to_string(), Value::Primitive(Primitive::Set));
+    env.define("set!".to_string(), Value::Primitive(Primitive::Set));
     env.define("if".to_string(), Value::Primitive(Primitive::If));
     env.define("lambda".to_string(), Value::Primitive(Primitive::Lambda));
     env.define("+".to_string(), Value::BuiltinProcedure(BuiltinProcedure {
