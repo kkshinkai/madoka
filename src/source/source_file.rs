@@ -1,6 +1,6 @@
-use std::{path::PathBuf, rc::Rc, io, fs::{File, self}};
+use std::{path::PathBuf, rc::Rc, io, fs::{File, self}, ops::Range};
 
-use super::{BytePos, source_analyzer};
+use super::{BytePos, source_analyzer, pos::CharPos};
 
 /// Represents a source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,7 +14,7 @@ pub struct SourceFile {
     /// The start position of this source in the file.
     ///
     /// Each file is assigned a unique index range, see [`BytePos`] for details.
-    start_pos: BytePos,
+    pub start_pos: BytePos, // TODO: Does this need to be public?
 
     /// The end position of this source in the file.
     end_pos: BytePos,
@@ -56,6 +56,92 @@ impl SourceFile {
             src, path, start_pos, end_pos, lines,
             multi_byte_chars, non_narrow_chars,
         }
+    }
+
+    /// Finds the line containing the given position.
+    ///
+    /// The return value is the index into the `lines` array of this
+    /// `SourceFile`, not the 1-based line number. If the source file is empty
+    /// or the position is located before the first line, `None` is returned.
+    pub fn lookup_line(&self, pos: BytePos) -> Option<usize> {
+        match self.lines.binary_search(&pos) {
+            Ok(index) => Some(index),
+            Err(0) => None,
+            Err(index) => Some(index - 1),
+        }
+    }
+
+    pub fn lookup_line_bounds(&self, line_index: usize) -> Range<BytePos> {
+        if self.is_empty() {
+            return self.start_pos..self.end_pos;
+        }
+
+        assert!(line_index < self.lines.len());
+        if line_index == (self.lines.len() - 1) {
+            self.lines[line_index]..self.end_pos
+        } else {
+            self.lines[line_index]..self.lines[line_index + 1]
+        }
+    }
+
+
+    /// Looks up the file's 1-based line number and (0-based `CharPos`) column
+    /// offset, for a given `BytePos`.
+    pub fn lookup_line_and_col(&self, pos: BytePos) -> (usize, CharPos) {
+        if let Some(line) = self.lookup_line(pos) {
+            let line_start = self.lines[line];
+            let col = {
+                let linebpos = self.lines[line];
+                let start_idx = self.multi_byte_chars
+                    .binary_search_by_key(&linebpos, |x| x.pos())
+                    .unwrap_or_else(|x| x);
+                let extra_byte = self
+                    .multi_byte_chars[start_idx..]
+                    .iter()
+                    .take_while(|x| x.pos() < pos)
+                    .map(|x| x.len() as usize - 1)
+                    .sum::<usize>();
+                CharPos::from_usize(
+                    pos.to_usize() - line_start.to_usize() - extra_byte
+                )
+            };
+            (line + 1, col)
+        } else {
+            (0, CharPos::from_usize(0))
+        }
+    }
+
+    pub fn lookup_line_col_and_col_display(
+        &self, pos: BytePos
+    ) -> (usize, CharPos, usize) {
+        let (line, col) = self.lookup_line_and_col(pos);
+        let col_display = {
+            let linebpos = self.lines[line - 1];
+            let start_idx = self
+                .non_narrow_chars
+                .binary_search_by_key(&linebpos, |x| x.pos())
+                .unwrap_or_else(|x| x);
+            let non_narrow = self
+                .non_narrow_chars[start_idx..]
+                .iter()
+                .take_while(|x| x.pos() < pos);
+            let width = non_narrow.clone()
+                .map(|x| x.width())
+                .sum::<usize>();
+            let count = non_narrow.count();
+            col.to_usize() + width - count
+        };
+        (line, col, col_display)
+    }
+
+    #[inline]
+    pub fn contains(&self, byte_pos: BytePos) -> bool {
+        byte_pos >= self.start_pos && byte_pos <= self.end_pos
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.start_pos == self.end_pos
     }
 }
 
@@ -146,7 +232,7 @@ impl NonNarrowChar {
     pub fn width(&self) -> usize {
         match self.kind {
             NonNarrowCharKind::ZeroWidth => 0,
-            NonNarrowCharKind::Wide => 1,
+            NonNarrowCharKind::Wide => 2,
             NonNarrowCharKind::Tab => 4,
         }
     }

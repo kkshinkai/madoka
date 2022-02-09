@@ -1,6 +1,6 @@
 use std::{rc::Rc, io, fs, path::PathBuf};
 
-use super::{source_file::{SourceFile, FilePath}, BytePos};
+use super::{source_file::{SourceFile, FilePath}, BytePos, loc::Loc};
 
 pub struct SourceMgr {
     /// The used byte position range.
@@ -68,5 +68,68 @@ impl SourceMgr {
         ));
         self.files.push(file.clone());
         file
+    }
+
+    pub fn lookup_loc(&self, pos: BytePos) -> Loc {
+        let sf = self.lookup_file(pos);
+        let (line, col, col_display) = sf.lookup_line_col_and_col_display(pos);
+        Loc::new(sf, line, col, col_display)
+    }
+
+    /// Finds the source file containing the given position.
+    pub fn lookup_file(&self, pos: BytePos) -> Rc<SourceFile> {
+        let idx = self.files
+            .binary_search_by_key(&pos, |file| file.start_pos)
+            .unwrap_or_else(|p| p - 1);
+        self.files[idx].clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::source::pos::CharPos;
+
+    use super::*;
+
+    #[test]
+    fn test_loc_single_file1() {
+        let mut mgr = SourceMgr::new();
+        mgr.load_virtual_file(
+            "example.scm".to_string(),
+            "abcdefghi".to_string(),
+        );
+        let loc = mgr.lookup_loc(BytePos::from_usize(5));
+
+        assert_eq!(loc.line(), 1);
+        assert_eq!(loc.col(), CharPos::from_usize(5));
+        assert_eq!(loc.col_display(), 5);
+    }
+
+    #[test]
+    fn test_loc_single_file2() {
+        let mut mgr = SourceMgr::new();
+        mgr.load_virtual_file(
+            "example".to_string(),
+            "abc\ndef\nghi".to_string(),
+        );
+        let loc = mgr.lookup_loc(BytePos::from_usize(5));
+
+        assert_eq!(loc.line(), 2);
+        assert_eq!(loc.col(), CharPos::from_usize(1));
+        assert_eq!(loc.col_display(), 1);
+    }
+
+    #[test]
+    fn test_loc_single_file3() {
+        let mut mgr = SourceMgr::new();
+        mgr.load_virtual_file(
+            "example".to_string(),
+            "🌊🌊🌊\n🌊🌊🌊\n🌊🌊🌊".to_string(),
+        );
+        let loc = mgr.lookup_loc(BytePos::from_usize(17));
+
+        assert_eq!(loc.line(), 2);
+        assert_eq!(loc.col(), CharPos::from_usize(1));
+        assert_eq!(loc.col_display(), 2);
     }
 }
