@@ -6,6 +6,8 @@ mod env;
 mod builtins;
 mod eval;
 
+use std::io::{self, Write};
+
 use builtins::{Value, Primitive, BuiltinProcedure};
 use parser::Parser;
 use eval::eval;
@@ -34,28 +36,26 @@ fn main() {
             if x.len() != 1 {
                 panic!("display expects 1 argument")
             } else {
-                println!("{}", match x.first().unwrap() {
-                    Value::String(s) => s.clone(),
-                    Value::Bool(true) => "#true".to_string(),
-                    Value::Bool(false) => "#false".to_string(),
-                    Value::Number(n) => n.to_string(),
-                    Value::Char(c) => c.to_string(),
-                    Value::BuiltinProcedure(_) | Value::Procedure(_) =>
-                        "#<procedure>".to_string(),
-                    Value::Void => "#<void>".to_string(),
-                    Value::Primitive(_) => panic!("display expects a value"),
-                });
+                println!("{}", x.first().unwrap());
                 Value::Void
             }
         }
     }));
 
+    let mut buffer = String::new();
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
 
-    Parser::new(r##"
-    (define inc (lambda (x) (+ x 1)))
+    loop {
+        print!("> ");
+        stdout.flush().expect("Failed to read line");
+        stdin.read_line(&mut buffer).expect("Failed to read line");
 
-    (display (inc (inc 42)))
-    "##).parse().iter().for_each(|datum| {
-        eval(datum, &mut env);
-    });
+        Parser::new(buffer.as_str())
+            .parse()
+            .iter()
+            .for_each(|datum| println!("{}", eval(datum, &mut env)));
+
+        buffer.clear();
+    }
 }
