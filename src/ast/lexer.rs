@@ -1,8 +1,59 @@
-use std::iter::Peekable;
+use std::{iter::Peekable, fmt::Display};
 
 use crate::{source::{Span, BytePos}, ast::token::{TriviaKind, NewLine}};
 
 use super::token::{Token, Trivia, TokenKind};
+
+/// A non-lazy token stream, usually used for debugging or testing.
+pub struct TokenTree {
+    vec: Vec<Token>,
+}
+
+impl TokenTree {
+    pub fn new<'src>(src: &'src str, start_pos: BytePos) -> Self {
+        TokenTree {
+            vec: Lexer::new(src, start_pos).collect(),
+        }
+    }
+}
+
+impl Display for TokenTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for token in self.vec.iter() {
+            write!(f, "({} {}..{}\n", match token.kind {
+                TokenKind::Eof => "end-of-file",
+                TokenKind::LParen => "left-paren",
+                TokenKind::RParen => "right-paren",
+                TokenKind::BadToken => "bad-token",
+                _ => "token",
+            }, token.span.start.to_usize(), token.span.end.to_usize())?;
+            write!(f, "  (leading-trivia",)?;
+            for trivia in token.leading_trivia.iter() {
+                match trivia.kind {
+                    TriviaKind::Whitespace => write!(f, " whitespace")?,
+                    TriviaKind::NewLine(NewLine::Cr) => write!(f, " cr")?,
+                    TriviaKind::NewLine(NewLine::CrLf) => write!(f, " crlf")?,
+                    TriviaKind::NewLine(NewLine::Lf) => write!(f, " lf")?,
+                    _ => write!(f, " trivia")?,
+                }
+            }
+            write!(f, ")\n",)?;
+
+            write!(f, "  (trailing-trivia")?;
+            for trivia in token.trailing_trivia.iter() {
+                match trivia.kind {
+                    TriviaKind::Whitespace => write!(f, " whitespace")?,
+                    TriviaKind::NewLine(NewLine::Cr) => write!(f, " cr")?,
+                    TriviaKind::NewLine(NewLine::CrLf) => write!(f, " crlf")?,
+                    TriviaKind::NewLine(NewLine::Lf) => write!(f, " lf")?,
+                    _ => write!(f, " trivia")?,
+                }
+            }
+            write!(f, "))\n",)?;
+        }
+        Ok(())
+    }
+}
 
 pub struct Lexer<'src> {
     curr_pos: BytePos,
