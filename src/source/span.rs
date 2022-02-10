@@ -2,10 +2,11 @@ use super::BytePos;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Span {
-    start: BytePos,
-    end: BytePos,
+    pub start: BytePos,
+    pub end: BytePos,
 }
 
+// These functions can be removed.
 impl Span {
     #[inline]
     pub fn new(start: BytePos, end: BytePos) -> Self {

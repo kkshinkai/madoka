@@ -1,4 +1,5 @@
 mod source;
+mod ast;
 
 // The following modules are used in the prototype and will be removed soon.
 mod tokens;
