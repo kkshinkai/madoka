@@ -33,13 +33,13 @@ pub enum TokenKind {
     Eof,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Trivia {
     pub kind: TriviaKind,
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TriviaKind {
     NewLine(NewLine),
     LineComment,
@@ -50,7 +50,7 @@ pub enum TriviaKind {
     // TODO: Support datum comments.
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NewLine {
     Cr,
     CrLf,

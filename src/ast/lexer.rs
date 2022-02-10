@@ -10,6 +10,10 @@ pub struct Lexer<'src> {
     // Do not use this directly. Use `pick` and `peek` instead.
     chars: Peekable<std::str::Chars<'src>>,
     curr_span: Span,
+
+    cached: Option<Token>,
+
+    is_end: bool,
 }
 
 impl<'src> Lexer<'src> {
@@ -18,6 +22,8 @@ impl<'src> Lexer<'src> {
             curr_pos: start_pos,
             chars: src.chars().peekable(),
             curr_span: Span::new(start_pos, start_pos),
+            cached: None,
+            is_end: false,
         }
     }
 
@@ -39,6 +45,55 @@ impl<'src> Lexer<'src> {
         let result = self.curr_span;
         self.curr_span = Span::new(self.curr_pos, self.curr_pos);
         result
+    }
+}
+
+impl<'src> Iterator for Lexer<'src> {
+    type Item = Token;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.is_end { return None }
+
+        let mut token = self.cached.take().or_else(|| {
+            let mut leading_trivia = Vec::new();
+            while let Some(next) = self.lex_token_or_trivia() {
+                match next {
+                    TokenOrTrivia::Trivia(trivia) => {
+                        leading_trivia.push(trivia);
+                    }
+                    TokenOrTrivia::Token(mut token) => {
+                        token.leading_trivia = leading_trivia;
+                        return Some(token);
+                    }
+                }
+            }
+            self.is_end = true;
+            return Some(Token {
+                kind: TokenKind::Eof,
+                span: self.take_span(),
+                leading_trivia,
+                trailing_trivia: Vec::new(),
+            });
+        }).unwrap();
+
+        let mut trailing_trivia = Vec::new();
+        while let Some(next) = self.lex_token_or_trivia() {
+            match next {
+                TokenOrTrivia::Trivia(trivia) => {
+                    trailing_trivia.push(trivia);
+                    match trivia.kind {
+                        TriviaKind::NewLine(_) => break,
+                        _ => (),
+                    }
+                }
+                TokenOrTrivia::Token(new_token) => {
+                    self.cached = Some(new_token);
+                    break;
+                }
+            }
+        }
+        token.trailing_trivia = trailing_trivia;
+        Some(token)
     }
 }
 
