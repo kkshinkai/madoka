@@ -149,7 +149,7 @@ impl SourceFile {
 ///
 /// The file may be virtual, or it may not exist. We don't check these when
 /// creating a new [`FilePath`].
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FilePath {
     /// The path to a real local file.
     Local(PathBuf),
@@ -158,7 +158,7 @@ pub enum FilePath {
     Virtual(String),
 
     /// The source code read from REPL.
-    Repl,
+    Repl(u64),
 }
 
 /// Represents a multi-byte UTF-8 unicode scalar in the source code.

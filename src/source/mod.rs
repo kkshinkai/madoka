@@ -6,4 +6,4 @@ mod loc;
 mod span;
 
 pub use manager::SourceMgr;
-pub use pos::BytePos;
+pub use pos::{BytePos, CharPos};

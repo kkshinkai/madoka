@@ -1,4 +1,4 @@
-use std::{rc::Rc, io, fs, path::PathBuf};
+use std::{rc::Rc, io, fs, path::PathBuf, collections::HashMap};
 
 use super::{source_file::{SourceFile, FilePath}, BytePos, loc::Loc, span::Span};
 
@@ -10,6 +10,9 @@ pub struct SourceMgr {
 
     /// The source files.
     files: Vec<Rc<SourceFile>>,
+
+    /// The source files hash map.
+    files_map: HashMap<FilePath, Rc<SourceFile>>,
 }
 
 impl SourceMgr {
@@ -17,6 +20,7 @@ impl SourceMgr {
         SourceMgr {
             used_pos_space: 0,
             files: Vec::new(),
+            files_map: HashMap::new(),
         }
     }
 
@@ -30,13 +34,20 @@ impl SourceMgr {
     pub fn load_file(
         &mut self, path: PathBuf,
     ) -> io::Result<Rc<SourceFile>> {
+        // Path must be absolute to uniquely identify the source file.
+        let file_path = FilePath::Local(fs::canonicalize(&path)?);
+        if let Some(sf) = self.files_map.get(&file_path) {
+            return Ok(sf.clone());
+        }
+
         let src = fs::read_to_string(&path)?;
         let start_pos =
             BytePos::from_usize(self.allocate_pos_space(src.len()));
         let file = Rc::new(
-            SourceFile::new(FilePath::Local(path), start_pos, Rc::new(src))
+            SourceFile::new(file_path.clone(), start_pos, Rc::new(src))
         );
         self.files.push(file.clone());
+        self.files_map.insert(file_path, file.clone());
         Ok(file)
     }
 
@@ -44,14 +55,20 @@ impl SourceMgr {
     pub fn load_virtual_file(
         &mut self, name: String, src: String
     ) -> Rc<SourceFile> {
+        let path = FilePath::Virtual(name);
+        if let Some(sf) = self.files_map.get(&path) {
+            return sf.clone();
+        }
+
         let start_pos =
             BytePos::from_usize(self.allocate_pos_space(src.len()));
         let file = Rc::new(SourceFile::new(
-            FilePath::Virtual(name),
+            path.clone(),
             start_pos,
             Rc::new(src),
         ));
         self.files.push(file.clone());
+        self.files_map.insert(path, file.clone());
         file
     }
 
@@ -62,7 +79,7 @@ impl SourceMgr {
         let start_pos =
             BytePos::from_usize(self.allocate_pos_space(src.len()));
         let file = Rc::new(SourceFile::new(
-            FilePath::Repl,
+            FilePath::Repl(start_pos.to_usize() as u64),
             start_pos,
             Rc::new(src),
         ));
