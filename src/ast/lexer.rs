@@ -79,13 +79,11 @@ impl<'src> Lexer<'src> {
     }
 
     fn eat(&mut self) -> Option<char> {
-        self.chars
-            .next()
-            .map(|c| {
-                self.curr_pos = self.curr_pos.offset(c.len_utf8() as isize);
-                self.curr_span.end = self.curr_pos;
-                c
-            })
+        self.chars.next().map(|c| {
+            self.curr_pos = self.curr_pos.offset(c.len_utf8() as isize);
+            self.curr_span.end = self.curr_pos;
+            c
+        })
     }
 
     fn peek(&mut self) -> Option<char> {
