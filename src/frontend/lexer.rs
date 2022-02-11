@@ -139,6 +139,14 @@ impl<'src> CharStream<'src> {
     }
 }
 
+impl Iterator for CharStream<'_> {
+    type Item = Char;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.read()
+    }
+}
+
 #[cfg(test)]
 mod char_stream_tests {
     use super::*;
