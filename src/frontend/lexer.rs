@@ -1,4 +1,4 @@
-use std::{iter::Peekable, str::Chars, num::ParseIntError};
+use std::{iter::Peekable, str::Chars, num::ParseIntError, vec};
 
 use crate::source::{Span, BytePos};
 
@@ -27,9 +27,6 @@ pub struct CharStream<'src> {
     chars: Peekable<Chars<'src>>,
 
     pub curr_pos: BytePos,
-
-    /// Stores the peeked character if there is one.
-    peeked_char: Option<char>,
 }
 
 impl<'src> CharStream<'src> {
@@ -39,7 +36,6 @@ impl<'src> CharStream<'src> {
             src,
             chars: src.chars().peekable(),
             curr_pos: start_pos,
-            peeked_char: None,
         }
     }
 
@@ -68,11 +64,11 @@ impl<'src> CharStream<'src> {
                     self.chars = cs;
                     let code = u32::from_str_radix(hex.as_str(), 16)
                         .map(|scalar| char::from_u32(scalar));
+                    let span = Span {
+                        start: self.curr_pos,
+                        end: self.curr_pos.offset(hex.as_bytes().len() + 2),
+                    };
                     if code.is_err() || code.as_ref().unwrap().is_none() {
-                        let span = Span {
-                            start: self.curr_pos,
-                            end: self.curr_pos.offset(hex.len() + 2),
-                        };
                         self.curr_pos = span.end;
                         return Err(LexError {
                             kind: LexErrorKind::InvalidEscapeSequence,
@@ -82,10 +78,16 @@ impl<'src> CharStream<'src> {
                     return Ok(Some(code.unwrap().unwrap()));
                 }
             }
+            self.curr_pos = self.curr_pos.offset(next.len_utf8());
             Ok(Some(next))
         } else {
             Ok(None)
         }
+    }
+
+    /// Peeks the next character without consuming it.
+    pub fn peek(&self) -> Result<Option<char>, LexError> {
+        self.clone().read()
     }
 }
 
@@ -106,7 +108,9 @@ mod char_stream_tests {
     fn test_escape_sequence() {
         let mut cs = CharStream::new("a\\x62;c", BytePos::from_usize(0));
         assert_eq!(cs.read(), Ok(Some('a')));
+        assert_eq!(cs.curr_pos, BytePos::from_usize(1));
         assert_eq!(cs.read(), Ok(Some('b')));
+        assert_eq!(cs.curr_pos, BytePos::from_usize(6));
         assert_eq!(cs.read(), Ok(Some('c')));
         assert_eq!(cs.read(), Ok(None));
     }
@@ -131,6 +135,20 @@ mod char_stream_tests {
         assert!(cs.read().is_err());
         assert_eq!(cs.read(), Ok(Some('c')));
         assert_eq!(cs.read(), Ok(None));
+    }
+
+    #[test]
+    fn test_peek() {
+        let mut cs = CharStream::new("ab", BytePos::from_usize(0));
+        assert_eq!(cs.peek(), Ok(Some('a')));
+        assert_eq!(cs.read(), Ok(Some('a')));
+
+        assert_eq!(cs.peek(), Ok(Some('b')));
+        assert_eq!(cs.curr_pos, BytePos::from_usize(1));
+        assert_eq!(cs.read(), Ok(Some('b')));
+        assert_eq!(cs.curr_pos, BytePos::from_usize(2));
+
+        assert_eq!(cs.peek(), Ok(None));
     }
 }
 
