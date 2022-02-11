@@ -1,59 +1,8 @@
-use std::{iter::Peekable, fmt::Display};
+use std::iter::Peekable;
 
 use crate::{source::{Span, BytePos}, ast::token::{TriviaKind, NewLine}};
 
 use super::token::{Token, Trivia, TokenKind};
-
-/// A non-lazy token stream, usually used for debugging or testing.
-pub struct TokenTree {
-    vec: Vec<Token>,
-}
-
-impl TokenTree {
-    pub fn new<'src>(src: &'src str, start_pos: BytePos) -> Self {
-        TokenTree {
-            vec: Lexer::new(src, start_pos).collect(),
-        }
-    }
-}
-
-impl Display for TokenTree {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for token in self.vec.iter() {
-            write!(f, "({} {}..{}\n", match token.kind {
-                TokenKind::Eof => "end-of-file",
-                TokenKind::LParen => "left-paren",
-                TokenKind::RParen => "right-paren",
-                TokenKind::BadToken => "bad-token",
-                _ => "token",
-            }, token.span.start.to_usize(), token.span.end.to_usize())?;
-            write!(f, "  (leading-trivia",)?;
-            for trivia in token.leading_trivia.iter() {
-                match trivia.kind {
-                    TriviaKind::Whitespace => write!(f, " whitespace")?,
-                    TriviaKind::NewLine(NewLine::Cr) => write!(f, " cr")?,
-                    TriviaKind::NewLine(NewLine::CrLf) => write!(f, " crlf")?,
-                    TriviaKind::NewLine(NewLine::Lf) => write!(f, " lf")?,
-                    _ => write!(f, " trivia")?,
-                }
-            }
-            write!(f, ")\n",)?;
-
-            write!(f, "  (trailing-trivia")?;
-            for trivia in token.trailing_trivia.iter() {
-                match trivia.kind {
-                    TriviaKind::Whitespace => write!(f, " whitespace")?,
-                    TriviaKind::NewLine(NewLine::Cr) => write!(f, " cr")?,
-                    TriviaKind::NewLine(NewLine::CrLf) => write!(f, " crlf")?,
-                    TriviaKind::NewLine(NewLine::Lf) => write!(f, " lf")?,
-                    _ => write!(f, " trivia")?,
-                }
-            }
-            write!(f, "))\n",)?;
-        }
-        Ok(())
-    }
-}
 
 pub struct Lexer<'src> {
     curr_pos: BytePos,
@@ -169,7 +118,12 @@ mod spec {
     ///             ; not as one token "abcdefghi".
     /// ```
     pub fn is_delimiter(c: char) -> bool {
-        is_whitespace(c) || ['(', ')', '"', ';', '|'].contains(&c)
+        [
+            '\r', '\n',              // Line ending
+            ' ', '\t',               // Whitespace
+            '(', ')', '"', ';', '|', // Else
+            '[', ']', '{', '}'       // Non-standard
+        ].contains(&c)
     }
 
     /// Check if the character is a Scheme whitespace.
@@ -205,6 +159,17 @@ pub enum TokenOrTrivia {
     Trivia(Trivia),
 }
 
+// '+', '-', is_digit => lex_number
+//
+// '#' ==> '|'                          ==> lex_block_comment
+//       | 'b', 'o', 'd', 'x', 'e', 'i' ==> lex_number_with_prefix
+//       | '\'                          ==> lex_character
+//       | ';'                          ==> lex_datum_comment (todo)
+//       | is_digit                     ==> lex_label
+//       | is_delimiter                 ==> identifier
+//       | _                            ==> bad_token_until_delimiter
+// _   ==>
+
 impl<'src> Lexer<'src> {
     fn lex_token_or_trivia(&mut self) -> Option<TokenOrTrivia> {
         self.peek().map(|c| {
@@ -214,6 +179,7 @@ impl<'src> Lexer<'src> {
                     TokenOrTrivia::Token(self.lex_paren())
                 },
                 ' ' | '\t' => TokenOrTrivia::Trivia(self.lex_whitespace()),
+                '#' => self.lex_number_sign_prefix(),
                 _ => todo!(),
             }
         })
@@ -287,5 +253,54 @@ impl<'src> Lexer<'src> {
             kind: TriviaKind::Whitespace,
             span: self.take_span(),
         }
+    }
+
+    fn lex_number_sign_prefix(&mut self) -> TokenOrTrivia {
+        assert_eq!(self.eat().unwrap(), '#');
+
+        if let Some(next) = self.peek() {
+            match next {
+                '|' => self.lex_block_comment(),
+                'b' | 'o' | 'd' | 'x' | 'i' | 'e' => {
+                    self.lex_number_sign_prefix()
+                },
+                _ => todo!(),
+            }
+        } else {
+            TokenOrTrivia::Token(
+                Token::new(TokenKind::BadToken, self.take_span())
+            )
+        }
+    }
+
+    fn lex_block_comment(&mut self) -> TokenOrTrivia {
+        assert_eq!(self.eat().unwrap(), '|');
+
+        let mut nest = 1;
+
+        while let Some(next) = self.eat() {
+            match next {
+                '#' if self.peek() == Some('|') => {
+                    self.eat();
+                    nest += 1;
+                },
+                '|' if self.peek() == Some('#') => {
+                    self.eat();
+                    nest -= 1;
+                    if nest == 0 {
+                        return TokenOrTrivia::Trivia(Trivia {
+                            kind: TriviaKind::BlockComment,
+                            span: self.take_span(),
+                        });
+                    }
+                },
+                _ => (),
+            }
+        }
+
+        TokenOrTrivia::Token(Token::new(
+            TokenKind::BadToken,
+            self.take_span(),
+        ))
     }
 }

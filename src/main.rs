@@ -16,13 +16,7 @@ mod eval;
 // use parser::Parser;
 // use eval::eval;
 
-use ast::{Lexer, TokenTree};
-use source::BytePos;
-
 fn main() {
-
-    let tt = TokenTree::new(" ( \n  ) \n  ", BytePos::from_usize(0));
-    println!("{}", tt);
 
     // let mut env = env::Env::new();
 
