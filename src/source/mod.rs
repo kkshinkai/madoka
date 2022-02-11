@@ -7,4 +7,5 @@ mod span;
 
 pub use manager::SourceMgr;
 pub use pos::{BytePos, CharPos};
+pub use source_file::SourceFile;
 pub use span::Span;

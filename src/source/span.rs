@@ -1,6 +1,6 @@
 use super::BytePos;
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Span {
     pub start: BytePos,
     pub end: BytePos,

@@ -2,6 +2,7 @@ use std::{rc::Rc, io, fs, path::PathBuf, collections::HashMap};
 
 use super::{source_file::{SourceFile, FilePath}, BytePos, loc::Loc, span::Span};
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct SourceMgr {
     /// The used byte position range.
     ///

@@ -1,5 +1,6 @@
 mod source;
 mod frontend;
+mod diagnostic;
 
 // The following modules are used in the prototype and will be removed soon.
 mod tokens;

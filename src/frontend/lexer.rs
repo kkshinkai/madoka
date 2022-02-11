@@ -154,6 +154,11 @@ mod char_stream_tests {
 }
 
 // pub struct Lexer<'src> {
+//     chars: CharStream<'src>,
+//     curr_span: Span,
+// }
+
+// pub struct Lexer<'src> {
 //     curr_pos: BytePos,
 
 //     // Do not use this directly. Use `pick` and `peek` instead.
