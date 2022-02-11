@@ -30,12 +30,8 @@ impl BytePos {
 
     /// Returns the [`BytePos`] offset by the given integer.
     #[inline]
-    pub fn offset(&self, n: isize) -> Self {
-        BytePos::from_usize(if n >= 0 {
-            self.pos + n as usize
-        } else {
-            self.pos - -n as usize
-        })
+    pub fn offset(&self, n: usize) -> Self {
+        BytePos { pos: self.pos + n }
     }
 
     pub fn inc(&self) -> Self {
@@ -51,7 +47,6 @@ mod byte_pos_tests {
     fn test_offset() {
         let pos = BytePos::from_usize(10);
         assert_eq!(pos.offset(3), BytePos::from_usize(13));
-        assert_eq!(pos.offset(-3), BytePos::from_usize(7));
     }
 
     #[test]

@@ -49,7 +49,7 @@ impl SourceFile {
         start_pos: BytePos,
         src: Rc<String>,
     ) -> SourceFile {
-        let end_pos = start_pos.offset(src.len() as isize);
+        let end_pos = start_pos.offset(src.len());
         let (lines, multi_byte_chars, non_narrow_chars) =
             source_analyzer::analyze(&src, start_pos);
         SourceFile {

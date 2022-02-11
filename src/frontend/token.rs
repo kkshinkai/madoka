@@ -25,14 +25,21 @@ impl Token {
 pub enum TokenKind {
     LParen,
     RParen,
+    Char(char),
+    Eof,
+
     BadLCurly,
     BadRCurly,
     BadLSquare,
     BadRSquare,
-
     BadToken,
-    BadParen,
-    Eof,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Number {
+    Frac(u64, u64),
+    Float(f64),
+    Int(u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
