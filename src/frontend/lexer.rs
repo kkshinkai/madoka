@@ -1,6 +1,6 @@
-use std::{iter::Peekable, str::Chars, num::ParseIntError, vec};
+use std::{iter::Peekable, str::Chars, num::ParseIntError, vec, rc::Rc, cell::RefCell};
 
-use crate::source::{Span, BytePos};
+use crate::{source::{Span, BytePos}, diagnostic::DiagnosticEngine};
 
 use super::{error::{LexError, LexErrorKind}, token::{Token, Trivia, TokenKind, TriviaKind}};
 
@@ -27,15 +27,49 @@ pub struct CharStream<'src> {
     chars: Peekable<Chars<'src>>,
 
     pub curr_pos: BytePos,
+    diag: Rc<RefCell<DiagnosticEngine>>,
+
+    peeked_char: Option<Char>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Char {
+    Char(char),
+    Escape(char),
+    InvalidEscape,
+}
+
+impl Char {
+    pub fn char(self) -> Option<char> {
+        match self {
+            Char::Char(c) => Some(c),
+            Char::Escape(c) => Some(c),
+            Char::InvalidEscape => None,
+        }
+    }
+
+    pub fn is_a(self, c: char) -> bool {
+        self.char() == Some(c)
+    }
+
+    pub fn is_invalid(self) -> bool {
+        self == Char::InvalidEscape
+    }
 }
 
 impl<'src> CharStream<'src> {
     /// Create a new Scheme character stream from a source string.
-    pub fn new(src: &'src str, start_pos: BytePos) -> Self {
+    pub fn new(
+        src: &'src str,
+        start_pos: BytePos,
+        diag: Rc<RefCell<DiagnosticEngine>>
+    ) -> Self {
         CharStream {
             src,
             chars: src.chars().peekable(),
             curr_pos: start_pos,
+            diag,
+            peeked_char: None,
         }
     }
 
@@ -49,7 +83,11 @@ impl<'src> CharStream<'src> {
     ///
     /// The invalid escape characters will be treated as a delimiter in the
     /// lexical analysis.
-    pub fn read(&mut self) -> Result<Option<char>, LexError> {
+    pub fn read(&mut self) -> Option<Char> {
+        if let Some(c) = self.peeked_char.take() {
+            return Some(c);
+        }
+
         if let Some(next) = self.chars.next() {
             let mut cs = self.chars.clone();
             if cs.next() == Some('x') {
@@ -62,33 +100,42 @@ impl<'src> CharStream<'src> {
                 }
                 if cs.next() == Some(';') {
                     self.chars = cs;
-                    let code = u32::from_str_radix(hex.as_str(), 16)
-                        .map(|scalar| char::from_u32(scalar));
+                    let c = u32::from_str_radix(hex.as_str(), 16)
+                        .ok()
+                        .and_then(|scalar| char::from_u32(scalar));
                     let span = Span {
                         start: self.curr_pos,
                         end: self.curr_pos.offset(hex.as_bytes().len() + 3),
                     };
                     self.curr_pos = span.end;
-                    if code.is_err() || code.as_ref().unwrap().is_none() {
-                        self.curr_pos = span.end;
-                        return Err(LexError {
-                            kind: LexErrorKind::InvalidEscapeSequence,
-                            span,
-                        });
+                    if let Some(c) = c {
+                        return Some(Char::Escape(c));
+                    } else {
+                        self.error_invalid_escape(span, hex.as_str());
+                        return Some(Char::InvalidEscape);
                     }
-                    return Ok(Some(code.unwrap().unwrap()));
                 }
             }
             self.curr_pos = self.curr_pos.offset(next.len_utf8());
-            Ok(Some(next))
+            Some(Char::Char(next))
         } else {
-            Ok(None)
+            None
         }
     }
 
+    fn error_invalid_escape(&mut self, span: Span, seq: &str) {
+        self.diag.borrow_mut()
+            .error(span, format!("invalid escape sequence \\x{};", seq));
+    }
+
     /// Peeks the next character without consuming it.
-    pub fn peek(&self) -> Result<Option<char>, LexError> {
-        self.clone().read()
+    pub fn peek(&mut self) -> Option<Char> {
+        if let Some(c) = self.peeked_char {
+            Some(c)
+        } else {
+            self.peeked_char = self.read();
+            self.peeked_char
+        }
     }
 }
 
@@ -98,58 +145,57 @@ mod char_stream_tests {
 
     #[test]
     fn test_simple_string() {
-        let mut cs = CharStream::new("abc", BytePos::from_usize(0));
-        assert_eq!(cs.read(), Ok(Some('a')));
-        assert_eq!(cs.read(), Ok(Some('b')));
-        assert_eq!(cs.read(), Ok(Some('c')));
-        assert_eq!(cs.read(), Ok(None));
+        let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
+        let mut cs = CharStream::new("abc", BytePos::from_usize(0), de);
+        assert!(cs.read().unwrap().is_a('a'));
+        assert!(cs.read().unwrap().is_a('b'));
+        assert!(cs.read().unwrap().is_a('c'));
+        assert_eq!(cs.read(), None);
     }
 
     #[test]
     fn test_escape_sequence() {
-        let mut cs = CharStream::new("a\\x62;c", BytePos::from_usize(0));
-        assert_eq!(cs.read(), Ok(Some('a')));
-        assert_eq!(cs.curr_pos, BytePos::from_usize(1));
-        assert_eq!(cs.read(), Ok(Some('b')));
-        assert_eq!(cs.curr_pos, BytePos::from_usize(6));
-        assert_eq!(cs.read(), Ok(Some('c')));
-        assert_eq!(cs.read(), Ok(None));
+        let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
+        let mut cs = CharStream::new("a\\x62;c", BytePos::from_usize(0), de);
+        assert!(cs.read().unwrap().is_a('a'));
+        assert!(cs.read().unwrap().is_a('b'));
+        assert!(cs.read().unwrap().is_a('c'));
+        assert_eq!(cs.read(), None);
     }
 
 
     #[test]
     fn test_non_escape_sequence() {
-        let mut cs = CharStream::new("a\\x62c", BytePos::from_usize(0));
-        assert_eq!(cs.read(), Ok(Some('a')));
-        assert_eq!(cs.read(), Ok(Some('\\')));
-        assert_eq!(cs.read(), Ok(Some('x')));
-        assert_eq!(cs.read(), Ok(Some('6')));
-        assert_eq!(cs.read(), Ok(Some('2')));
-        assert_eq!(cs.read(), Ok(Some('c')));
-        assert_eq!(cs.read(), Ok(None));
+        let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
+        let mut cs = CharStream::new("a\\x62c", BytePos::from_usize(0), de);
+        assert!(cs.read().unwrap().is_a('a'));
+        assert!(cs.read().unwrap().is_a('\\'));
+        assert!(cs.read().unwrap().is_a('x'));
+        assert!(cs.read().unwrap().is_a('6'));
+        assert!(cs.read().unwrap().is_a('2'));
+        assert!(cs.read().unwrap().is_a('c'));
+        assert_eq!(cs.read(), None);
     }
 
     #[test]
     fn test_invaild_escape_sequence() {
-        let mut cs = CharStream::new("a\\x999999;c", BytePos::from_usize(0));
-        assert_eq!(cs.read(), Ok(Some('a')));
-        assert!(cs.read().is_err());
-        assert_eq!(cs.read(), Ok(Some('c')));
-        assert_eq!(cs.read(), Ok(None));
+        let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
+        let mut cs = CharStream::new("a\\x999999;c", BytePos::from_usize(0), de);
+        assert!(cs.read().unwrap().is_a('a'));
+        assert!(cs.read().unwrap().is_invalid());
+        assert!(cs.read().unwrap().is_a('c'));
+        assert_eq!(cs.read(), None);
     }
 
     #[test]
     fn test_peek() {
-        let mut cs = CharStream::new("ab", BytePos::from_usize(0));
-        assert_eq!(cs.peek(), Ok(Some('a')));
-        assert_eq!(cs.read(), Ok(Some('a')));
-
-        assert_eq!(cs.peek(), Ok(Some('b')));
-        assert_eq!(cs.curr_pos, BytePos::from_usize(1));
-        assert_eq!(cs.read(), Ok(Some('b')));
-        assert_eq!(cs.curr_pos, BytePos::from_usize(2));
-
-        assert_eq!(cs.peek(), Ok(None));
+        let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
+        let mut cs = CharStream::new("ab", BytePos::from_usize(0), de);
+        assert!(cs.peek().unwrap().is_a('a'));
+        assert!(cs.read().unwrap().is_a('a'));
+        assert!(cs.peek().unwrap().is_a('b'));
+        assert!(cs.read().unwrap().is_a('b'));
+        assert_eq!(cs.read(), None);
     }
 }
 
