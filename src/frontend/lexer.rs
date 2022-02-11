@@ -2,7 +2,7 @@ use std::{iter::Peekable, str::Chars, num::ParseIntError, vec};
 
 use crate::source::{Span, BytePos};
 
-use super::error::{LexError, LexErrorKind};
+use super::{error::{LexError, LexErrorKind}, token::{Token, Trivia, TokenKind, TriviaKind}};
 
 /// Streams for pre-processing Scheme escape sequences (`\x<hexdigits>;`).
 ///
@@ -66,8 +66,9 @@ impl<'src> CharStream<'src> {
                         .map(|scalar| char::from_u32(scalar));
                     let span = Span {
                         start: self.curr_pos,
-                        end: self.curr_pos.offset(hex.as_bytes().len() + 2),
+                        end: self.curr_pos.offset(hex.as_bytes().len() + 3),
                     };
+                    self.curr_pos = span.end;
                     if code.is_err() || code.as_ref().unwrap().is_none() {
                         self.curr_pos = span.end;
                         return Err(LexError {
@@ -177,7 +178,7 @@ mod char_stream_tests {
 
 //     fn eat(&mut self) -> Option<char> {
 //         self.chars.next().map(|c| {
-//             self.curr_pos = self.curr_pos.offset(c.len_utf8() as isize);
+//             self.curr_pos = self.curr_pos.offset(c.len_utf8());
 //             self.curr_span.end = self.curr_pos;
 //             c
 //         })
@@ -304,11 +305,6 @@ mod char_stream_tests {
 //     }
 // }
 
-// pub enum TokenOrTrivia {
-//     Token(Token),
-//     Trivia(Trivia),
-// }
-
 // // '+', '-', is_digit => lex_number
 // //
 // // '#' ==> '|'                          ==> lex_block_comment
@@ -320,20 +316,27 @@ mod char_stream_tests {
 // //       | _                            ==> bad_token_until_delimiter
 // // _   ==>
 
+enum TokenOrTrivia { // Keep this private
+    Token(Token),
+    Trivia(Trivia),
+}
+
 // impl<'src> Lexer<'src> {
+
 //     fn lex_token_or_trivia(&mut self) -> Option<TokenOrTrivia> {
 //         self.peek().map(|c| {
 //             match c {
-//                 '\n' | '\r' => TokenOrTrivia::Trivia(self.lex_line_ending()),
-//                 '(' | ')' | '[' | ']' | '{' | '}' => {
-//                     TokenOrTrivia::Token(self.lex_paren())
-//                 },
-//                 ' ' | '\t' => TokenOrTrivia::Trivia(self.lex_whitespace()),
-//                 '#' => self.lex_number_sign_prefix(),
+//                 // '\n' | '\r' => TokenOrTrivia::Trivia(self.lex_line_ending()),
+//                 // '(' | ')' | '[' | ']' | '{' | '}' => {
+//                 //     TokenOrTrivia::Token(self.lex_paren())
+//                 // },
+//                 // ' ' | '\t' => TokenOrTrivia::Trivia(self.lex_whitespace()),
+//                 // '#' => self.lex_number_sign_prefix(),
 //                 _ => todo!(),
 //             }
 //         })
 //     }
+// }
 
 //     /// Reads a line ending (CR, LF, or CRLF) from source.
 //     ///
