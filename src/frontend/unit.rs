@@ -2,6 +2,8 @@ use std::{rc::Rc, cell::RefCell};
 
 use crate::{source::{SourceMgr, SourceFile}, diagnostic::DiagnosticEngine};
 
+use super::lexer::CharStream;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompilationUnit {
     pub files: SourceMgr,

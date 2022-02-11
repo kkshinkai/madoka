@@ -2,7 +2,7 @@ use std::{iter::Peekable, str::Chars, num::ParseIntError, vec, rc::Rc, cell::Ref
 
 use crate::{source::{Span, BytePos}, diagnostic::DiagnosticEngine};
 
-use super::{error::{LexError, LexErrorKind}, token::{Token, Trivia, TokenKind, TriviaKind}};
+use super::token::{Token, Trivia, TokenKind, TriviaKind};
 
 /// Streams for pre-processing Scheme escape sequences (`\x<hexdigits>;`).
 ///
@@ -207,10 +207,39 @@ mod char_stream_tests {
     }
 }
 
-// pub struct Lexer<'src> {
-//     chars: CharStream<'src>,
-//     curr_span: Span,
-// }
+pub struct Lexer<'src> {
+    chars: CharStream<'src>,
+    curr_span: Span,
+    diag: Rc<RefCell<DiagnosticEngine>>,
+}
+
+impl<'src> Lexer<'src> {
+    pub fn new(src: &'src str, start_pos: BytePos, diag: Rc<RefCell<DiagnosticEngine>>) -> Self {
+        Lexer {
+            chars: CharStream::new(src, start_pos, diag.clone()),
+            curr_span: Span::new(start_pos, start_pos),
+            diag,
+        }
+    }
+
+    fn eat(&mut self) -> Option<Char> {
+        self.chars.next().map(|c| {
+            self.curr_span.end = self.chars.curr_pos;
+            c
+        })
+    }
+
+    fn peek(&mut self) -> Option<Char> {
+        self.chars.peek()
+    }
+
+    fn get_span(&mut self) -> Span {
+        let result = self.curr_span;
+        let new_start_pos = self.chars.curr_pos;
+        self.curr_span = Span::new(new_start_pos, new_start_pos);
+        result
+    }
+}
 
 // pub struct Lexer<'src> {
 //     curr_pos: BytePos,
@@ -222,36 +251,6 @@ mod char_stream_tests {
 //     cached: Option<Token>,
 
 //     is_end: bool,
-// }
-
-// impl<'src> Lexer<'src> {
-//     pub fn new(src: &'src str, start_pos: BytePos) -> Self {
-//         Lexer {
-//             curr_pos: start_pos,
-//             chars: src.chars().peekable(),
-//             curr_span: Span::new(start_pos, start_pos),
-//             cached: None,
-//             is_end: false,
-//         }
-//     }
-
-//     fn eat(&mut self) -> Option<char> {
-//         self.chars.next().map(|c| {
-//             self.curr_pos = self.curr_pos.offset(c.len_utf8());
-//             self.curr_span.end = self.curr_pos;
-//             c
-//         })
-//     }
-
-//     fn peek(&mut self) -> Option<char> {
-//         self.chars.peek().cloned()
-//     }
-
-//     fn take_span(&mut self) -> Span {
-//         let result = self.curr_span;
-//         self.curr_span = Span::new(self.curr_pos, self.curr_pos);
-//         result
-//     }
 // }
 
 // impl<'src> Iterator for Lexer<'src> {
