@@ -55,6 +55,7 @@ pub enum TriviaKind {
     BlockComment,
     SkippedToken,
     Whitespace,
+    BadEscape,
 
     // TODO: Support datum comments.
 }

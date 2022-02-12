@@ -2,7 +2,7 @@ use std::{iter::Peekable, str::Chars, num::ParseIntError, vec, rc::Rc, cell::Ref
 
 use crate::{source::{Span, BytePos}, diagnostic::DiagnosticEngine};
 
-use super::token::{Token, Trivia, TokenKind, TriviaKind};
+use super::token::{Token, Trivia, TokenKind, TriviaKind, NewLine};
 
 /// Streams for pre-processing Scheme escape sequences (`\x<hexdigits>;`).
 ///
@@ -211,6 +211,11 @@ pub struct Lexer<'src> {
     chars: CharStream<'src>,
     curr_span: Span,
     diag: Rc<RefCell<DiagnosticEngine>>,
+
+    cached_token: Option<Token>,
+    is_end: bool,
+
+    peeked_token: Option<Token>,
 }
 
 impl<'src> Lexer<'src> {
@@ -219,6 +224,9 @@ impl<'src> Lexer<'src> {
             chars: CharStream::new(src, start_pos, diag.clone()),
             curr_span: Span::new(start_pos, start_pos),
             diag,
+            cached_token: None,
+            is_end: false,
+            peeked_token: None,
         }
     }
 
@@ -241,66 +249,54 @@ impl<'src> Lexer<'src> {
     }
 }
 
-// pub struct Lexer<'src> {
-//     curr_pos: BytePos,
+impl<'src> Iterator for Lexer<'src> {
+    type Item = Token;
 
-//     // Do not use this directly. Use `pick` and `peek` instead.
-//     chars: Peekable<std::str::Chars<'src>>,
-//     curr_span: Span,
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.is_end { return None }
 
-//     cached: Option<Token>,
+        let mut token = self.cached_token.take().or_else(|| {
+            let mut leading_trivia = Vec::new();
+            while let Some(next) = self.lex_token_or_trivia() {
+                match next {
+                    TokenOrTrivia::Trivia(trivia) => {
+                        leading_trivia.push(trivia);
+                    }
+                    TokenOrTrivia::Token(mut token) => {
+                        token.leading_trivia = leading_trivia;
+                        return Some(token);
+                    }
+                }
+            }
+            self.is_end = true;
+            return Some(Token {
+                kind: TokenKind::Eof,
+                span: self.get_span(),
+                leading_trivia,
+                trailing_trivia: Vec::new(),
+            });
+        }).unwrap();
 
-//     is_end: bool,
-// }
-
-// impl<'src> Iterator for Lexer<'src> {
-//     type Item = Token;
-
-//     fn next(&mut self) -> Option<Self::Item> {
-//         if self.is_end { return None }
-
-//         let mut token = self.cached.take().or_else(|| {
-//             let mut leading_trivia = Vec::new();
-//             while let Some(next) = self.lex_token_or_trivia() {
-//                 match next {
-//                     TokenOrTrivia::Trivia(trivia) => {
-//                         leading_trivia.push(trivia);
-//                     }
-//                     TokenOrTrivia::Token(mut token) => {
-//                         token.leading_trivia = leading_trivia;
-//                         return Some(token);
-//                     }
-//                 }
-//             }
-//             self.is_end = true;
-//             return Some(Token {
-//                 kind: TokenKind::Eof,
-//                 span: self.take_span(),
-//                 leading_trivia,
-//                 trailing_trivia: Vec::new(),
-//             });
-//         }).unwrap();
-
-//         let mut trailing_trivia = Vec::new();
-//         while let Some(next) = self.lex_token_or_trivia() {
-//             match next {
-//                 TokenOrTrivia::Trivia(trivia) => {
-//                     trailing_trivia.push(trivia);
-//                     match trivia.kind {
-//                         TriviaKind::NewLine(_) => break,
-//                         _ => (),
-//                     }
-//                 }
-//                 TokenOrTrivia::Token(new_token) => {
-//                     self.cached = Some(new_token);
-//                     break;
-//                 }
-//             }
-//         }
-//         token.trailing_trivia = trailing_trivia;
-//         Some(token)
-//     }
-// }
+        let mut trailing_trivia = Vec::new();
+        while let Some(next) = self.lex_token_or_trivia() {
+            match next {
+                TokenOrTrivia::Trivia(trivia) => {
+                    trailing_trivia.push(trivia);
+                    match trivia.kind {
+                        TriviaKind::NewLine(_) => break,
+                        _ => (),
+                    }
+                }
+                TokenOrTrivia::Token(new_token) => {
+                    self.cached_token = Some(new_token);
+                    break;
+                }
+            }
+        }
+        token.trailing_trivia = trailing_trivia;
+        Some(token)
+    }
+}
 
 // mod spec {
 //     use crate::frontend::token::Number;
@@ -379,77 +375,89 @@ enum TokenOrTrivia { // Keep this private
     Trivia(Trivia),
 }
 
-// impl<'src> Lexer<'src> {
+impl<'src> Lexer<'src> {
+    fn lex_token_or_trivia(&mut self) -> Option<TokenOrTrivia> {
+        self.peek().map(|c| {
+            if let Some(c) = c.char() {
+                match c {
+                    '\n' | '\r' => self.lex_line_ending(),
+                    '(' | ')' | '[' | ']' | '{' | '}' => self.lex_paren(),
+                    // ' ' | '\t' => self.lex_whitespace(),
+                    // '#' => self.lex_number_sign_prefix(),
+                    _ => todo!(),
+                }
+            } else {
+                TokenOrTrivia::Trivia(Trivia {
+                    kind: TriviaKind::BadEscape,
+                    span: self.get_span(),
+                })
+            }
+        })
+    }
 
-//     fn lex_token_or_trivia(&mut self) -> Option<TokenOrTrivia> {
-//         self.peek().map(|c| {
-//             match c {
-//                 // '\n' | '\r' => TokenOrTrivia::Trivia(self.lex_line_ending()),
-//                 // '(' | ')' | '[' | ']' | '{' | '}' => {
-//                 //     TokenOrTrivia::Token(self.lex_paren())
-//                 // },
-//                 // ' ' | '\t' => TokenOrTrivia::Trivia(self.lex_whitespace()),
-//                 // '#' => self.lex_number_sign_prefix(),
-//                 _ => todo!(),
-//             }
-//         })
-//     }
-// }
+    /// Reads a line ending (CR, LF, or CRLF) from source.
+    ///
+    /// ```text
+    /// line-ending ::=
+    ///     | newline
+    ///     | return newline
+    ///     | return
+    /// ```
+    fn lex_line_ending(&mut self) -> TokenOrTrivia {
+        let next = self.eat().unwrap().char().unwrap();
+        assert!(next == '\n' || next == '\r');
 
-//     /// Reads a line ending (CR, LF, or CRLF) from source.
-//     ///
-//     /// ```plain
-//     /// line-ending -> newline | return newline | return
-//     /// ```
-//     fn lex_line_ending(&mut self) -> Trivia {
-//         match self.eat().unwrap() {
-//             '\n' => Trivia {
-//                 kind: TriviaKind::NewLine(NewLine::Lf),
-//                 span: self.take_span(),
-//             },
-//             '\r' => {
-//                 if self.peek() == Some('\n') {
-//                     self.eat();
-//                     Trivia {
-//                         kind: TriviaKind::NewLine(NewLine::CrLf),
-//                         span: self.take_span(),
-//                     }
-//                 } else {
-//                     Trivia {
-//                         kind: TriviaKind::NewLine(NewLine::Cr),
-//                         span: self.take_span()
-//                     }
-//                 }
-//             }
-//             _ => unreachable!(),
-//         }
-//     }
+        TokenOrTrivia::Trivia(
+            match next {
+                '\n' => Trivia {
+                    kind: TriviaKind::NewLine(NewLine::Lf),
+                    span: self.get_span(),
+                },
+                '\r' => {
+                    if matches!(self.peek(), Some(c) if c.is_a('\n')) {
+                        self.eat();
+                        Trivia {
+                            kind: TriviaKind::NewLine(NewLine::CrLf),
+                            span: self.get_span(),
+                        }
+                    } else {
+                        Trivia {
+                            kind: TriviaKind::NewLine(NewLine::Cr),
+                            span: self.get_span()
+                        }
+                    }
+                },
+                _ => unreachable!(),
+            }
+        )
+    }
 
-//     /// Reads a parenthesis from source.
-//     ///
-//     /// R7RS specifies that `[`, `]`, `{`, `}` are reserved for future
-//     /// extensions to the language (section 7.1.1). They are not alternatives to
-//     /// `(` or `)`. It is ungrammatical to use these four characters in the
-//     /// source code.
-//     ///
-//     /// To provide better diagnostics, `[`, `]`, `{`, `}` are read as bad
-//     /// parenthesis tokens. Since R7RS bans the use of `[`, `]`, `{`, `}`, the
-//     /// `delimiter` only contains `(`, `)`, but in our fault-tolerant lexer,
-//     /// `[`, `]`, `{`, `}` should also be `delimiter`.
-//     fn lex_paren(&mut self) -> Token {
-//         Token::new(
-//             match self.eat().unwrap() {
-//                 '(' => TokenKind::LParen,
-//                 ')' => TokenKind::RParen,
-//                 '[' => TokenKind::BadLSquare,
-//                 ']' => TokenKind::BadRSquare,
-//                 '{' => TokenKind::BadLCurly,
-//                 '}' => TokenKind::BadRCurly,
-//                 _ => unreachable!(),
-//             },
-//             self.take_span(),
-//         )
-//     }
+
+    /// Reads a parenthesis from source.
+    ///
+    /// R7RS specifies that `[`, `]`, `{`, `}` are reserved for future
+    /// extensions to the language (section 7.1.1). They are not alternatives
+    /// to `(` or `)`, but an ungrammatical error. To provide fault-tolerant
+    /// diagnostics, `[`, `]`, `{`, `}` are read as bad parenthesis tokens.
+    ///
+    /// The `[`, `]`, `{` and `}` should also be `delimiter`.
+    fn lex_paren(&mut self) -> TokenOrTrivia {
+        let next = self.eat().unwrap().char().unwrap();
+        assert!(['(', ')', '[', ']', '{', '}'].contains(&next));
+
+        let kind = match next {
+            '(' => TokenKind::LParen,
+            ')' => TokenKind::RParen,
+            '[' => TokenKind::BadLSquare,
+            ']' => TokenKind::BadRSquare,
+            '{' => TokenKind::BadLCurly,
+            '}' => TokenKind::BadRCurly,
+            _ => unreachable!(),
+        };
+
+        TokenOrTrivia::Token(Token::new(kind, self.get_span()))
+    }
+}
 
 //     /// Reads a string of intraline whitespace from source.
 //     ///
