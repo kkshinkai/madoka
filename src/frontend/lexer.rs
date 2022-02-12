@@ -477,25 +477,33 @@ impl<'src> Lexer<'src> {
         })
     }
 
+    fn lex_number_sign_prefix(&mut self) -> TokenOrTrivia {
+        assert_eq!(self.eat().unwrap().char().unwrap(), '#');
+
+        if let Some(next) = self.peek() {
+            if let Some(c) = next.char() {
+                match c {
+                    // '|' => self.lex_block_comment(),
+                    // 'b' | 'o' | 'd' | 'x' | 'i' | 'e' => {
+                        // self.lex_number_sign_prefix()
+                    // },
+                    _ => todo!(),
+                }
+            } else {
+                // Found a bad escape (considered as delimiter) after `#`.
+                TokenOrTrivia::Token(Token::new(
+                    TokenKind::Ident("#".to_string()),
+                    self.get_span()
+                ))
+            }
+        } else {
+            TokenOrTrivia::Token(Token::new(
+                TokenKind::BadToken,
+                self.get_span()
+            ))
+        }
+    }
 }
-
-//     fn lex_number_sign_prefix(&mut self) -> TokenOrTrivia {
-//         assert_eq!(self.eat().unwrap(), '#');
-
-//         if let Some(next) = self.peek() {
-//             match next {
-//                 '|' => self.lex_block_comment(),
-//                 'b' | 'o' | 'd' | 'x' | 'i' | 'e' => {
-//                     self.lex_number_sign_prefix()
-//                 },
-//                 _ => todo!(),
-//             }
-//         } else {
-//             TokenOrTrivia::Token(
-//                 Token::new(TokenKind::BadToken, self.take_span())
-//             )
-//         }
-//     }
 
 //     fn lex_block_comment(&mut self) -> TokenOrTrivia {
 //         assert_eq!(self.eat().unwrap(), '|');

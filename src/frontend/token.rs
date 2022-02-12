@@ -26,6 +26,7 @@ pub enum TokenKind {
     LParen,
     RParen,
     Char(char),
+    Ident(String),
     Eof,
 
     BadLCurly,
