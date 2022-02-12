@@ -426,6 +426,7 @@ impl<'src> Lexer<'src> {
                     _ => todo!(),
                 }
             } else {
+                self.eat();
                 TokenOrTrivia::Trivia(Trivia {
                     kind: TriviaKind::BadEscape,
                     span: self.get_span(),
@@ -494,7 +495,11 @@ impl<'src> Lexer<'src> {
             _ => unreachable!(),
         };
 
-        TokenOrTrivia::Token(Token::new(kind, self.get_span()))
+        let span = self.get_span();
+        if ['[', ']', '{', '}'].contains(&next) {
+            self.error_invalid_paren(span, next)
+        }
+        TokenOrTrivia::Token(Token::new(kind, span))
     }
 
     /// Reads a string of intraline whitespace from source.
@@ -588,8 +593,23 @@ impl<'src> Lexer<'src> {
 
 impl Lexer<'_> {
     fn error_unclosed_comments(&mut self, span: Span) {
-        self.diag.borrow_mut().error(span, concat!(
+        self.diag.borrow_mut().error(
+            span,
             "Missing trailing `|#` symbols to terminate the block comment"
-        ).to_string());
+                .to_string()
+        );
+    }
+
+    fn error_invalid_paren(&mut self, span: Span, paren: char) {
+        let instead = match paren {
+            '[' | '{' => '(',
+            ']' | '}' => ')',
+            _ => unreachable!(),
+        };
+        self.diag.borrow_mut().error(
+            span,
+            format!("Invalid parenthesis '{}', this parenthesis is not a \
+                legal character in R7RS, please use '{}' instead", paren, instead),
+        );
     }
 }

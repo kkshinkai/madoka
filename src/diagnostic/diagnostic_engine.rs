@@ -38,3 +38,18 @@ impl DiagnosticEngine {
         });
     }
 }
+
+impl DiagnosticEngine {
+    /// A temporary diagnostic printer.
+    pub fn emit(&self) {
+        for diag in &self.diags {
+            let level = match diag.level {
+                Level::Error => "error",
+                Level::Warning => "warning",
+                Level::Note => "note",
+            };
+            println!("{}: {}", level, diag.message);
+        }
+    }
+}
+
