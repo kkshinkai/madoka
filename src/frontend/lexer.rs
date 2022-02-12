@@ -382,7 +382,7 @@ impl<'src> Lexer<'src> {
                 match c {
                     '\n' | '\r' => self.lex_line_ending(),
                     '(' | ')' | '[' | ']' | '{' | '}' => self.lex_paren(),
-                    // ' ' | '\t' => self.lex_whitespace(),
+                    ' ' | '\t' => self.lex_whitespace(),
                     // '#' => self.lex_number_sign_prefix(),
                     _ => todo!(),
                 }
@@ -457,22 +457,27 @@ impl<'src> Lexer<'src> {
 
         TokenOrTrivia::Token(Token::new(kind, self.get_span()))
     }
-}
 
-//     /// Reads a string of intraline whitespace from source.
-//     ///
-//     /// ```plain
-//     /// intraline-whitespace -> space-or-tab
-//     /// ```
-//     fn lex_whitespace(&mut self) -> Trivia {
-//         while self.peek() == Some(' ') || self.peek() == Some('\t') {
-//             self.eat();
-//         }
-//         Trivia {
-//             kind: TriviaKind::Whitespace,
-//             span: self.take_span(),
-//         }
-//     }
+    /// Reads a string of intraline whitespace from source.
+    ///
+    /// ```text
+    /// intraline-whitespace ::=
+    ///     | space-or-tab
+    /// ```
+    fn lex_whitespace(&mut self) -> TokenOrTrivia {
+        let next = self.eat().unwrap().char().unwrap();
+        assert!(next == ' ' || next == '\t');
+
+        while matches!(self.peek(), Some(c) if c.is_a(' ') || c.is_a('\t')) {
+            self.eat();
+        }
+        TokenOrTrivia::Trivia(Trivia {
+            kind: TriviaKind::Whitespace,
+            span: self.get_span(),
+        })
+    }
+
+}
 
 //     fn lex_number_sign_prefix(&mut self) -> TokenOrTrivia {
 //         assert_eq!(self.eat().unwrap(), '#');
