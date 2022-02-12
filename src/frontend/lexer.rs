@@ -483,7 +483,7 @@ impl<'src> Lexer<'src> {
         if let Some(next) = self.peek() {
             if let Some(c) = next.char() {
                 match c {
-                    // '|' => self.lex_block_comment(),
+                    '|' => self.lex_block_comment(),
                     // 'b' | 'o' | 'd' | 'x' | 'i' | 'e' => {
                         // self.lex_number_sign_prefix()
                     // },
@@ -503,36 +503,46 @@ impl<'src> Lexer<'src> {
             ))
         }
     }
+
+    /// Read a `#|...|#`-style comment.
+    ///
+    /// Assumes the initial "#" has already been read.
+    fn lex_block_comment(&mut self) -> TokenOrTrivia {
+        assert_eq!(self.eat().unwrap().char().unwrap(), '|');
+
+        let mut nest = 1;
+
+        while let Some(next) = self.eat() {
+            match next.char() {
+                Some('#') if matches!(self.peek(), Some(c) if c.is_a('|')) => {
+                    self.eat();
+                    nest += 1;
+                },
+                Some('|') if matches!(self.peek(), Some(c) if c.is_a('#')) => {
+                    self.eat();
+                    nest -= 1;
+                    if nest == 0 {
+                        return TokenOrTrivia::Trivia(Trivia {
+                            kind: TriviaKind::BlockComment,
+                            span: self.get_span(),
+                        });
+                    }
+                },
+                _ => (),
+            }
+        }
+
+        let span = self.get_span();
+        self.error_unclosed_comments(span);
+        TokenOrTrivia::Token(Token::new(TokenKind::BadToken, span))
+    }
 }
 
-//     fn lex_block_comment(&mut self) -> TokenOrTrivia {
-//         assert_eq!(self.eat().unwrap(), '|');
 
-//         let mut nest = 1;
-
-//         while let Some(next) = self.eat() {
-//             match next {
-//                 '#' if self.peek() == Some('|') => {
-//                     self.eat();
-//                     nest += 1;
-//                 },
-//                 '|' if self.peek() == Some('#') => {
-//                     self.eat();
-//                     nest -= 1;
-//                     if nest == 0 {
-//                         return TokenOrTrivia::Trivia(Trivia {
-//                             kind: TriviaKind::BlockComment,
-//                             span: self.take_span(),
-//                         });
-//                     }
-//                 },
-//                 _ => (),
-//             }
-//         }
-
-//         TokenOrTrivia::Token(Token::new(
-//             TokenKind::BadToken,
-//             self.take_span(),
-//         ))
-//     }
-// }
+impl Lexer<'_> {
+    fn error_unclosed_comments(&mut self, span: Span) {
+        self.diag.borrow_mut().error(span, concat!(
+            "Missing trailing `|#` symbols to terminate the block comment"
+        ).to_string());
+    }
+}
