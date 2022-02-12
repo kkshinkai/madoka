@@ -1,6 +1,6 @@
-use std::{iter::Peekable, str::Chars, num::ParseIntError, vec, rc::Rc, cell::RefCell};
+use std::{iter::Peekable, str::Chars, rc::Rc, cell::RefCell};
 
-use crate::{source::{Span, BytePos}, diagnostic::DiagnosticEngine};
+use crate::{source::{Span, BytePos}, diagnostic::DiagnosticEngine, utils::HasThat};
 
 use super::token::{Token, Trivia, TokenKind, TriviaKind, NewLine};
 
@@ -40,6 +40,7 @@ pub enum Char {
 }
 
 impl Char {
+    #[deprecated]
     pub fn char(self) -> Option<char> {
         match self {
             Char::Char(c) => Some(c),
@@ -48,12 +49,22 @@ impl Char {
         }
     }
 
+    #[deprecated]
     pub fn is_a(self, c: char) -> bool {
         self.char() == Some(c)
     }
 
+    #[deprecated]
     pub fn is_invalid(self) -> bool {
         self == Char::InvalidEscape
+    }
+
+    pub fn unwrap(self) -> char {
+        match self {
+            Char::Char(c) => c,
+            Char::Escape(c) => c,
+            Char::InvalidEscape => panic!(),
+        }
     }
 }
 
