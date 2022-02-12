@@ -68,6 +68,19 @@ impl Char {
     }
 }
 
+impl HasThat<char> for Char {
+    fn has_that<F>(&self, cond: F) -> bool
+        where F: Fn(&char) -> bool
+    {
+        match self {
+            Char::Char(c) => cond(c),
+            Char::Escape(c) => cond(c),
+            Char::InvalidEscape => false,
+        }
+    }
+}
+
+
 impl<'src> CharStream<'src> {
     /// Create a new Scheme character stream from a source string.
     pub fn new(
@@ -166,9 +179,9 @@ mod char_stream_tests {
     fn test_simple_string() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("abc", BytePos::from_usize(0), de);
-        assert!(cs.read().unwrap().is_a('a'));
-        assert!(cs.read().unwrap().is_a('b'));
-        assert!(cs.read().unwrap().is_a('c'));
+        assert!(cs.read().has_a(&Char::Char('a')));
+        assert!(cs.read().has_a(&Char::Char('b')));
+        assert!(cs.read().has_a(&Char::Char('c')));
         assert_eq!(cs.read(), None);
     }
 
@@ -176,9 +189,9 @@ mod char_stream_tests {
     fn test_escape_sequence() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("a\\x62;c", BytePos::from_usize(0), de);
-        assert!(cs.read().unwrap().is_a('a'));
-        assert!(cs.read().unwrap().is_a('b'));
-        assert!(cs.read().unwrap().is_a('c'));
+        assert!(cs.read().has_a(&Char::Char('a')));
+        assert!(cs.read().has_a(&Char::Escape('b')));
+        assert!(cs.read().has_a(&Char::Char('c')));
         assert_eq!(cs.read(), None);
     }
 
@@ -187,12 +200,12 @@ mod char_stream_tests {
     fn test_non_escape_sequence() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("a\\x62c", BytePos::from_usize(0), de);
-        assert!(cs.read().unwrap().is_a('a'));
-        assert!(cs.read().unwrap().is_a('\\'));
-        assert!(cs.read().unwrap().is_a('x'));
-        assert!(cs.read().unwrap().is_a('6'));
-        assert!(cs.read().unwrap().is_a('2'));
-        assert!(cs.read().unwrap().is_a('c'));
+        assert!(cs.read().has_a(&Char::Char('a')));
+        assert!(cs.read().has_a(&Char::Char('\\')));
+        assert!(cs.read().has_a(&Char::Char('x')));
+        assert!(cs.read().has_a(&Char::Char('6')));
+        assert!(cs.read().has_a(&Char::Char('2')));
+        assert!(cs.read().has_a(&Char::Char('c')));
         assert_eq!(cs.read(), None);
     }
 
@@ -200,9 +213,9 @@ mod char_stream_tests {
     fn test_invaild_escape_sequence() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("a\\x999999;c", BytePos::from_usize(0), de);
-        assert!(cs.read().unwrap().is_a('a'));
-        assert!(cs.read().unwrap().is_invalid());
-        assert!(cs.read().unwrap().is_a('c'));
+        assert!(cs.read().has_a(&Char::Char('a')));
+        assert!(cs.read().has_a(&Char::InvalidEscape));
+        assert!(cs.read().has_a(&Char::Char('c')));
         assert_eq!(cs.read(), None);
     }
 
@@ -210,10 +223,10 @@ mod char_stream_tests {
     fn test_peek() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("ab", BytePos::from_usize(0), de);
-        assert!(cs.peek().unwrap().is_a('a'));
-        assert!(cs.read().unwrap().is_a('a'));
-        assert!(cs.peek().unwrap().is_a('b'));
-        assert!(cs.read().unwrap().is_a('b'));
+        assert!(cs.peek().has_a(&Char::Char('a')));
+        assert!(cs.read().has_a(&Char::Char('a')));
+        assert!(cs.peek().has_a(&Char::Char('b')));
+        assert!(cs.read().has_a(&Char::Char('b')));
         assert_eq!(cs.read(), None);
     }
 }

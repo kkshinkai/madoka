@@ -1,6 +1,12 @@
 pub trait HasThat<T> where T: PartialEq {
-    fn has_a(&self, x: &T) -> bool;
-    fn has_any_of(&self, xs: &[T]) -> bool;
+    fn has_a(&self, x: &T) -> bool {
+        self.has_that(|it| it == x)
+    }
+
+    fn has_any_of(&self, xs: &[T]) -> bool {
+        xs.iter().any(|x| self.has_a(x))
+    }
+
     fn has_that<F>(&self, cond: F) -> bool where F: Fn(&T) -> bool;
 }
 
