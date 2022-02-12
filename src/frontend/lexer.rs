@@ -40,7 +40,6 @@ pub enum Char {
 }
 
 impl Char {
-    #[deprecated]
     pub fn char(self) -> Option<char> {
         match self {
             Char::Char(c) => Some(c),
@@ -271,6 +270,22 @@ impl<'src> Lexer<'src> {
         self.curr_span = Span::new(new_start_pos, new_start_pos);
         result
     }
+
+    fn peek_is(&mut self, char: char) -> bool {
+        self.peek().map(|c| c.has_a(&char)).unwrap_or(false)
+    }
+
+    fn peek_any(&mut self, chars: &[char]) -> bool {
+        self.peek().map(|c| chars.iter().any(|&c| c == c)).unwrap_or(false)
+    }
+
+    fn eat_is(&mut self, char: char) -> bool {
+        self.eat().map(|c| c.has_a(&char)).unwrap_or(false)
+    }
+
+    fn eat_any(&mut self, chars: &[char]) -> bool {
+        self.eat().map(|c| chars.iter().any(|&c| c == c)).unwrap_or(false)
+    }
 }
 
 impl<'src> Iterator for Lexer<'src> {
@@ -428,23 +443,23 @@ impl<'src> Lexer<'src> {
     ///     | return
     /// ```
     fn lex_line_ending(&mut self) -> TokenOrTrivia {
-        let next = self.eat().unwrap().char().unwrap();
+        let next = self.eat().unwrap().unwrap();
         assert!(next == '\n' || next == '\r');
 
         TokenOrTrivia::Trivia(
             match next {
-                '\n' => Trivia {
+                '\n' => Trivia { // (1) LF
                     kind: TriviaKind::NewLine(NewLine::Lf),
                     span: self.get_span(),
                 },
                 '\r' => {
-                    if matches!(self.peek(), Some(c) if c.is_a('\n')) {
+                    if self.peek_is('\n') { // (2) CRLF
                         self.eat();
                         Trivia {
                             kind: TriviaKind::NewLine(NewLine::CrLf),
                             span: self.get_span(),
                         }
-                    } else {
+                    } else { // (3) CR
                         Trivia {
                             kind: TriviaKind::NewLine(NewLine::Cr),
                             span: self.get_span()
@@ -466,7 +481,7 @@ impl<'src> Lexer<'src> {
     ///
     /// The `[`, `]`, `{` and `}` should also be `delimiter`.
     fn lex_paren(&mut self) -> TokenOrTrivia {
-        let next = self.eat().unwrap().char().unwrap();
+        let next = self.eat().unwrap().unwrap();
         assert!(['(', ')', '[', ']', '{', '}'].contains(&next));
 
         let kind = match next {
@@ -489,10 +504,10 @@ impl<'src> Lexer<'src> {
     ///     | space-or-tab
     /// ```
     fn lex_whitespace(&mut self) -> TokenOrTrivia {
-        let next = self.eat().unwrap().char().unwrap();
+        let next = self.eat().unwrap().unwrap();
         assert!(next == ' ' || next == '\t');
 
-        while matches!(self.peek(), Some(c) if c.is_a(' ') || c.is_a('\t')) {
+        while self.peek_any(&[' ', '\t']) {
             self.eat();
         }
         TokenOrTrivia::Trivia(Trivia {
@@ -502,7 +517,7 @@ impl<'src> Lexer<'src> {
     }
 
     fn lex_number_sign_prefix(&mut self) -> TokenOrTrivia {
-        assert_eq!(self.eat().unwrap().char().unwrap(), '#');
+        assert!(self.eat_is('#'));
 
         if let Some(next) = self.peek() {
             if let Some(c) = next.char() {
@@ -532,18 +547,18 @@ impl<'src> Lexer<'src> {
     ///
     /// Assumes the initial "#" has already been read.
     fn lex_block_comment(&mut self) -> TokenOrTrivia {
-        assert_eq!(self.eat().unwrap().char().unwrap(), '|');
+        assert!(self.eat_is('|'));
 
         let mut nest = 1;
 
         while let Some(next) = self.eat() {
             match next.char() {
-                Some('#') if matches!(self.peek(), Some(c) if c.is_a('|')) => {
-                    self.eat();
+                Some('#') if self.peek_is('|') => {
+                    self.eat(); // Eat '|'.
                     nest += 1;
                 },
-                Some('|') if matches!(self.peek(), Some(c) if c.is_a('#')) => {
-                    self.eat();
+                Some('|') if self.peek_is('#') => {
+                    self.eat(); // Eat '#'.
                     nest -= 1;
                     if nest == 0 {
                         return TokenOrTrivia::Trivia(Trivia {
@@ -552,7 +567,15 @@ impl<'src> Lexer<'src> {
                         });
                     }
                 },
-                _ => (),
+                _ => {
+                    // There are two cases in this branch:
+                    //
+                    // - The next char is a normal character `Some(char)` in
+                    //   comment, ignore them;
+                    // - The next char is `None`, which means we got an invalid
+                    //   escape sequence. We don't need to do anything here,
+                    //   `CharStream` will report the error;
+                }
             }
         }
 
