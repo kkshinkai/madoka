@@ -64,7 +64,7 @@ mod tests {
     fn test_result_contains() {
         assert!(Ok::<_, ()>(1).has_a(&1));
         assert!(!Ok::<_, ()>(1).has_a(&2));
-        assert!(Err(()).has_a(&1));
+        assert!(!Err(()).has_a(&1));
 
         assert!(Ok::<_, ()>(1).has_any_of(&[1, 2, 3]));
         assert!(!Ok::<_, ()>(4).has_any_of(&[1, 2, 3]));
