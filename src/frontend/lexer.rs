@@ -277,7 +277,9 @@ impl<'src> Lexer<'src> {
     }
 
     fn peek_any(&mut self, chars: &[char]) -> bool {
-        self.peek().map(|c| chars.iter().any(|&c| c == c)).unwrap_or(false)
+        self.peek()
+            .map(|ch| chars.iter().any(|&c| ch.has_a(&c)))
+            .unwrap_or(false)
     }
 
     fn peek_that<F>(&mut self, pred: F) -> bool
@@ -291,7 +293,9 @@ impl<'src> Lexer<'src> {
     }
 
     fn eat_any(&mut self, chars: &[char]) -> bool {
-        self.eat().map(|c| chars.iter().any(|&c| c == c)).unwrap_or(false)
+        self.eat()
+            .map(|ch| chars.iter().any(|&c| ch.has_a(&c)))
+            .unwrap_or(false)
     }
 
     fn eat_that<F>(&mut self, pred: F) -> bool
@@ -446,13 +450,13 @@ mod spec_tests {
     }
 }
 
-enum TokenOrTrivia { // Keep this private
+pub enum TokenOrTrivia { // Keep this private
     Token(Token),
     Trivia(Trivia),
 }
 
 impl<'src> Lexer<'src> {
-    fn lex_token_or_trivia(&mut self) -> Option<TokenOrTrivia> {
+    pub fn lex_token_or_trivia(&mut self) -> Option<TokenOrTrivia> {
         self.peek().map(|c| {
             if let Some(c) = c.char() {
                 match c {
