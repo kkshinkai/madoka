@@ -1,6 +1,6 @@
 use std::{iter::Peekable, str::Chars, rc::Rc, cell::RefCell};
 
-use crate::{source::{Span, BytePos}, diagnostic::DiagnosticEngine, utils::HasThat};
+use crate::{source::{Span, BytePos}, diagnostic::DiagnosticEngine, utils::HasThat, frontend::lexer::spec::is_delimiter};
 
 use super::token::{Token, Trivia, TokenKind, TriviaKind, NewLine, Complex, Real};
 
@@ -280,12 +280,24 @@ impl<'src> Lexer<'src> {
         self.peek().map(|c| chars.iter().any(|&c| c == c)).unwrap_or(false)
     }
 
+    fn peek_that<F>(&mut self, pred: F) -> bool
+        where F: Fn(char) -> bool,
+    {
+        self.peek().map(|c| c.has_that(|&c| pred(c))).unwrap_or(false)
+    }
+
     fn eat_is(&mut self, char: char) -> bool {
         self.eat().map(|c| c.has_a(&char)).unwrap_or(false)
     }
 
     fn eat_any(&mut self, chars: &[char]) -> bool {
         self.eat().map(|c| chars.iter().any(|&c| c == c)).unwrap_or(false)
+    }
+
+    fn eat_that<F>(&mut self, pred: F) -> bool
+        where F: Fn(char) -> bool,
+    {
+        self.eat().map(|c| c.has_that(|&c| pred(c))).unwrap_or(false)
     }
 }
 
@@ -566,6 +578,8 @@ impl<'src> Lexer<'src> {
                     'e' | 'E' => self.lex_number(None, Some(false)),
                     _ => unreachable!(),
                 }
+            } else if next.has_a(&'\\') {
+                self.lex_character()
             } else if next.char().is_some()  {
                 todo!() // Read to the end.
             } else {
@@ -731,6 +745,51 @@ impl<'src> Lexer<'src> {
             TokenKind::Number(Complex::Real(Real::Int(number.parse().unwrap()))),
             self.get_span(),
         ))
+    }
+
+    fn lex_character(&mut self) -> TokenOrTrivia {
+        assert!(self.eat_is('\\'));
+        let mut char = String::new();
+
+        if self.peek_that(spec::is_delimiter) {
+            return TokenOrTrivia::Token(Token::new(
+                TokenKind::Char(self.eat().unwrap().unwrap()),
+                self.get_span(),
+            ));
+        }
+
+        while self.peek().is_some() && !self.peek_that(spec::is_delimiter) {
+            char.push(self.eat().unwrap().unwrap());
+        }
+
+        let kind = match char.as_str() {
+            "alarm" => TokenKind::Char('\x07'),
+            "backspace" => TokenKind::Char('\x08'),
+            "delete" => TokenKind::Char('\x7F'),
+            "escape" => TokenKind::Char('\x1B'),
+            "newline" => TokenKind::Char('\n'),
+            "null" => TokenKind::Char('\0'),
+            "return" => TokenKind::Char('\r'),
+            "space" => TokenKind::Char(' '),
+            "tab" => TokenKind::Char('\t'),
+
+            _ if char.len() == 1 => {
+                TokenKind::Char(char.chars().next().unwrap())
+            },
+
+            _ if char.chars().next().has_a(&'x') => {
+                let hex = &char[1..];
+                if hex.chars().all(|c| c.is_digit(16)) {
+                    TokenKind::Char(std::char::from_u32(u32::from_str_radix(hex, 16).unwrap()).unwrap())
+                } else {
+                    TokenKind::BadToken
+                }
+            }
+
+            _ => TokenKind::BadToken,
+        };
+
+        TokenOrTrivia::Token(Token::new(kind, self.get_span()))
     }
 }
 

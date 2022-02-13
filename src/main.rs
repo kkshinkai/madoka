@@ -8,7 +8,7 @@ use std::{rc::Rc, cell::RefCell};
 use crate::{frontend::Lexer, source::BytePos, diagnostic::DiagnosticEngine};
 
 fn main() {
-    let src = r##"123"##;
+    let src = r##"1 2 3 4"##;
 
     let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
     Lexer::new(src, BytePos::from_usize(0), de.clone()).for_each(|t| {
