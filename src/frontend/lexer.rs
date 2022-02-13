@@ -2,7 +2,7 @@ use std::{iter::Peekable, str::Chars, rc::Rc, cell::RefCell};
 
 use crate::{source::{Span, BytePos}, diagnostic::DiagnosticEngine, utils::HasThat};
 
-use super::token::{Token, Trivia, TokenKind, TriviaKind, NewLine};
+use super::token::{Token, Trivia, TokenKind, TriviaKind, NewLine, Complex, Real};
 
 use unicode_general_category::{get_general_category, GeneralCategory};
 
@@ -371,7 +371,7 @@ mod spec {
         .contains(&c)
     }
 
-    pub fn is_identifier_head(c: char) -> bool {
+    pub fn is_identifier_body(c: char) -> bool {
         is_identifier_body(c) || [
             GeneralCategory::DecimalNumber,        // Nd (Number, decimal digit)
             GeneralCategory::SpacingMark,          // Mc (Mark, spacing combining)
@@ -379,7 +379,7 @@ mod spec {
         ].contains(&get_general_category(c))
     }
 
-    pub fn is_identifier_body(c: char) -> bool {
+    pub fn is_identifier_head(c: char) -> bool {
         c == '\u{200C}' || c == '\u{200D}' || [
             GeneralCategory::UppercaseLetter,      // Lu (Letter, uppercase)
             GeneralCategory::LowercaseLetter,      // Ll (Letter, lowercase)
@@ -405,6 +405,33 @@ mod spec {
         ]
         .contains(&get_general_category(c))
     }
+
+    pub fn is_number_prefix(c: char) -> bool {
+        [
+            'b', 'o', 'd', 'x', 'i' ,'e',
+            'B', 'O', 'D', 'X', 'I', 'E',
+        ]
+        .contains(&c)
+    }
+
+    pub fn is_number_exactness_prefix(c: char) -> bool {
+        ['e', 'E', 'i', 'I'].contains(&c)
+    }
+
+    pub fn is_number_radix_prefix(c: char) -> bool {
+        ['b', 'B', 'o', 'O', 'd', 'D', 'x', 'X'].contains(&c)
+    }
+}
+
+#[cfg(test)]
+mod spec_tests {
+    use super::spec::*;
+
+    #[test]
+    fn test_identifier_head() {
+        assert!(is_identifier_head('a'));
+        assert!(!is_identifier_head('0'));
+    }
 }
 
 enum TokenOrTrivia { // Keep this private
@@ -423,6 +450,7 @@ impl<'src> Lexer<'src> {
                     '#' => self.lex_number_sign_prefix(),
                     ';' => self.lex_line_comment(),
                     _ if spec::is_identifier_head(c) => self.lex_identifier(),
+                    '0'..='9' => self.lex_number(None, None),
                     _ => todo!(),
                 }
             } else {
@@ -525,14 +553,21 @@ impl<'src> Lexer<'src> {
         assert!(self.eat_is('#'));
 
         if let Some(next) = self.peek() {
-            if let Some(c) = next.char() {
-                match c {
-                    '|' => self.lex_block_comment(),
-                    // 'b' | 'o' | 'd' | 'x' | 'i' | 'e' => {
-                        // self.lex_number_sign_prefix()
-                    // },
-                    _ => todo!(),
+            if next.has_a(&'|') {
+                self.lex_block_comment()
+            } else if next.has_that(|&c| spec::is_number_prefix(c)) {
+                let prefix = self.eat().unwrap().unwrap();
+                match prefix {
+                    'b' | 'B' => self.lex_number(Some(2), None),
+                    'o' | 'O' => self.lex_number(Some(8), None),
+                    'd' | 'D' => self.lex_number(Some(10), None),
+                    'x' | 'X' => self.lex_number(Some(16), None),
+                    'i' | 'I' => self.lex_number(None, Some(true)),
+                    'e' | 'E' => self.lex_number(None, Some(false)),
+                    _ => unreachable!(),
                 }
+            } else if next.char().is_some()  {
+                todo!() // Read to the end.
             } else {
                 // Found a bad escape (considered as delimiter) after `#`.
                 TokenOrTrivia::Token(Token::new(
@@ -624,6 +659,76 @@ impl<'src> Lexer<'src> {
 
         TokenOrTrivia::Token(Token::new(
             TokenKind::Ident(ident),
+            self.get_span(),
+        ))
+    }
+
+    /// Reads a number.
+    fn lex_number(
+        &mut self,
+        mut radix: Option<u8>,
+        mut exactness: Option<bool>
+    ) -> TokenOrTrivia {
+        // Read all the prefixs.
+        // while self.peek_is('#') {
+        //     self.eat();
+        //     if let Some(prefix) = self.peek() {
+        //         match prefix.char() {
+        //             Some('b' | 'B') => {
+        //                 if radix.is_some() {
+        //                     panic!()
+        //                 }
+        //                 radix = Some(2);
+        //             },
+        //             Some('o' | 'O') => {
+        //                 if radix.is_some() {
+        //                     panic!()
+        //                 }
+        //                 radix = Some(8);
+        //             },
+        //             Some('d' | 'D') => {
+        //                 if radix.is_some() {
+        //                     panic!()
+        //                 }
+        //                 radix = Some(10);
+        //             },
+        //             Some('x' | 'X') => {
+        //                 if radix.is_some() {
+        //                     panic!()
+        //                 }
+        //                 radix = Some(16);
+        //             },
+        //             Some('i' | 'I') => {
+        //                 if exactness.is_some() {
+        //                     panic!()
+        //                 }
+        //                 exactness = Some(true);
+        //             },
+        //             Some('e' | 'E') => {
+        //                 if exactness.is_some() {
+        //                     panic!()
+        //                 }
+        //                 exactness = Some(false);
+        //             },
+        //             Some(c) => todo!(),
+        //             None => todo!(),
+        //         }
+        //     }
+        // }
+
+        let mut number = String::new();
+        while let Some(next) = self.peek() {
+            if next.has_that(|c| c.is_digit(10)) {
+                number.push(self.eat().unwrap().unwrap());
+            } else if next.has_that(|c| spec::is_delimiter(*c)) {
+                break;
+            } else {
+                continue;
+            }
+        }
+
+        TokenOrTrivia::Token(Token::new(
+            TokenKind::Number(Complex::Real(Real::Int(number.parse().unwrap()))),
             self.get_span(),
         ))
     }

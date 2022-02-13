@@ -27,6 +27,7 @@ pub enum TokenKind {
     RParen,
     Char(char),
     Ident(String),
+    Number(Complex),
     Eof,
 
     BadLCurly,
@@ -37,7 +38,13 @@ pub enum TokenKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Number {
+pub enum Complex {
+    Complex(Real, Real),
+    Real(Real),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Real {
     Frac(u64, u64),
     Float(f64),
     Int(u64),

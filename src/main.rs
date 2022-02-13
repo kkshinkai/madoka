@@ -8,10 +8,13 @@ use std::{rc::Rc, cell::RefCell};
 use crate::{frontend::Lexer, source::BytePos, diagnostic::DiagnosticEngine};
 
 fn main() {
-    let src = r##"[\x123123123;]#| asdad |#"##;
+    let src = r##"123"##;
 
     let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
-    let _ = Lexer::new(src, BytePos::from_usize(0), de.clone())
-        .collect::<Vec<_>>();
+    Lexer::new(src, BytePos::from_usize(0), de.clone()).for_each(|t| {
+        println!("{:?} {}..{}", t.kind, t.span.start.to_usize(), t.span.end.to_usize());
+    });
+
+
     de.borrow().emit();
 }
