@@ -4,6 +4,8 @@ use crate::{source::{Span, BytePos}, diagnostic::DiagnosticEngine, utils::HasTha
 
 use super::token::{Token, Trivia, TokenKind, TriviaKind, NewLine};
 
+use unicode_general_category::{get_general_category, GeneralCategory};
+
 /// Streams for pre-processing Scheme escape sequences (`\x<hexdigits>;`).
 ///
 /// The character stream handles Scheme's hex escape characters and returns them
@@ -53,7 +55,6 @@ impl Char {
         self.char() == Some(c)
     }
 
-    #[deprecated]
     pub fn is_invalid(self) -> bool {
         self == Char::InvalidEscape
     }
@@ -338,6 +339,8 @@ impl<'src> Iterator for Lexer<'src> {
 }
 
 mod spec {
+    use unicode_general_category::{get_general_category, GeneralCategory};
+
     /// The delimiter characters to separate identifiers and some literals.
     ///
     /// ```text
@@ -367,6 +370,41 @@ mod spec {
         ]
         .contains(&c)
     }
+
+    pub fn is_identifier_head(c: char) -> bool {
+        is_identifier_body(c) || [
+            GeneralCategory::DecimalNumber,        // Nd (Number, decimal digit)
+            GeneralCategory::SpacingMark,          // Mc (Mark, spacing combining)
+            GeneralCategory::EnclosingMark,        // Me (Mark, enclosing)
+        ].contains(&get_general_category(c))
+    }
+
+    pub fn is_identifier_body(c: char) -> bool {
+        c == '\u{200C}' || c == '\u{200D}' || [
+            GeneralCategory::UppercaseLetter,      // Lu (Letter, uppercase)
+            GeneralCategory::LowercaseLetter,      // Ll (Letter, lowercase)
+            GeneralCategory::TitlecaseLetter,      // Lt (Letter, titlecase)
+            GeneralCategory::ModifierLetter,       // Lm (Letter, modifier)
+            GeneralCategory::OtherLetter,          // Lo (Letter, other)
+
+            GeneralCategory::NonspacingMark,       // Mn (Mark, nonspacing)
+
+            GeneralCategory::LetterNumber,         // Nl (Number, letter)
+            GeneralCategory::OtherNumber,          // No (Number, other)
+
+            GeneralCategory::DashPunctuation,      // Pd (Punctuation, dash)
+            GeneralCategory::ConnectorPunctuation, // Pc (Punctuation, connector)
+            GeneralCategory::OtherPunctuation,     // Po (Punctuation, other)
+
+            GeneralCategory::CurrencySymbol,       // Sc (Symbol, currency)
+            GeneralCategory::MathSymbol,           // Sm (Symbol, math)
+            GeneralCategory::ModifierSymbol,       // Sk (Symbol, modifier)
+            GeneralCategory::OtherSymbol,          // So (Symbol, other)
+
+            GeneralCategory::PrivateUse, // Co (Private Use)
+        ]
+        .contains(&get_general_category(c))
+    }
 }
 
 enum TokenOrTrivia { // Keep this private
@@ -384,6 +422,7 @@ impl<'src> Lexer<'src> {
                     ' ' | '\t' => self.lex_whitespace(),
                     '#' => self.lex_number_sign_prefix(),
                     ';' => self.lex_line_comment(),
+                    _ if spec::is_identifier_head(c) => self.lex_identifier(),
                     _ => todo!(),
                 }
             } else {
@@ -564,6 +603,29 @@ impl<'src> Lexer<'src> {
             kind: TriviaKind::LineComment,
             span: self.get_span(),
         })
+    }
+
+    fn lex_identifier(&mut self) -> TokenOrTrivia {
+        let mut ident = String::new();
+        while let Some(c) = self.peek() {
+            if c.has_that(|c| spec::is_delimiter(*c)) {
+                break;
+            } else if c.has_that(|c| spec::is_identifier_body(*c)) {
+                ident.push(self.eat().unwrap().unwrap());
+            } else if c.is_invalid() {
+                // Found a bad escape, just ignore it. The identifier will not
+                // be cut off.
+                continue;
+            } else {
+                // Found a invalid character in identifier, just ignore it.
+                continue;
+            }
+        }
+
+        TokenOrTrivia::Token(Token::new(
+            TokenKind::Ident(ident),
+            self.get_span(),
+        ))
     }
 }
 

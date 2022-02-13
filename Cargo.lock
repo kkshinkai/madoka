@@ -6,8 +6,15 @@ version = 3
 name = "madoka"
 version = "0.1.0"
 dependencies = [
+ "unicode-general-category",
  "unicode-width",
 ]
+
+[[package]]
+name = "unicode-general-category"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1218098468b8085b19a2824104c70d976491d247ce194bbd9dc77181150cdfd6"
 
 [[package]]
 name = "unicode-width"
