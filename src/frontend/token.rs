@@ -28,6 +28,7 @@ pub enum TokenKind {
     Char(char),
     Ident(String),
     Number(Complex),
+    String(String),
     Eof,
 
     BadLCurly,

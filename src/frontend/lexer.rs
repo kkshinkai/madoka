@@ -388,7 +388,7 @@ mod spec {
     }
 
     pub fn is_identifier_body(c: char) -> bool {
-        is_identifier_body(c) || [
+        is_identifier_head(c) || [
             GeneralCategory::DecimalNumber,        // Nd (Number, decimal digit)
             GeneralCategory::SpacingMark,          // Mc (Mark, spacing combining)
             GeneralCategory::EnclosingMark,        // Me (Mark, enclosing)
@@ -465,6 +465,7 @@ impl<'src> Lexer<'src> {
                     ' ' | '\t' => self.lex_whitespace(),
                     '#' => self.lex_number_sign_prefix(),
                     ';' => self.lex_line_comment(),
+                    '"' => self.lex_string_literal(),
                     _ if spec::is_identifier_head(c) => self.lex_identifier(),
                     '0'..='9' => self.lex_number(None, None),
                     _ => todo!(),
@@ -794,6 +795,103 @@ impl<'src> Lexer<'src> {
         };
 
         TokenOrTrivia::Token(Token::new(kind, self.get_span()))
+    }
+
+    /// Reads a string literal.
+    ///
+    /// ```text
+    /// mnemonic escape ::=
+    ///     | '\a'
+    ///     | '\b'
+    ///     | '\t'
+    ///     | '\n'
+    ///     | '\r'
+    /// ```
+    fn lex_string_literal(&mut self) -> TokenOrTrivia {
+        assert!(self.eat_is('"'));
+
+        let mut string = String::new();
+        while let Some(c) = self.peek() {
+            if let Some(next) = c.char() {
+                match next {
+                    '"' => {
+                        self.eat();
+                        return TokenOrTrivia::Token(Token::new(
+                            TokenKind::String(string),
+                            self.get_span(),
+                        ));
+                    },
+                    '\\' => {
+                        self.eat();
+                        if let Some(next) = self.peek() {
+                            match next.char() {
+                                Some('a') => {
+                                    self.eat();
+                                    string.push('\x07');
+                                },
+                                Some('b') => {
+                                    self.eat();
+                                    string.push('\x08');
+                                },
+                                Some('t') => {
+                                    self.eat();
+                                    string.push('\t');
+                                },
+                                Some('n') => {
+                                    self.eat();
+                                    string.push('\n');
+                                },
+                                Some('r') => {
+                                    self.eat();
+                                    string.push('\r');
+                                },
+                                Some('"') => {
+                                    self.eat();
+                                    string.push('"');
+                                },
+                                Some('\\') => {
+                                    self.eat();
+                                    string.push('\\');
+                                },
+                                Some(' ' | '\t' | '\n' | '\r') => {
+                                    while self.peek_any(&[' ', '\t']) {
+                                        self.eat();
+                                    }
+                                    if self.peek_any(&['\r', '\n']) {
+                                        let next = self.eat().unwrap().unwrap();
+                                        if next == '\r' {
+                                            self.eat();
+                                            if self.peek_is('\n') {
+                                                self.eat();
+                                            }
+                                        }
+                                    } else {
+                                        // TODO: error
+                                        break;
+                                    }
+                                    while self.peek_any(&[' ', '\t']) {
+                                        self.eat();
+                                    }
+                                },
+                                _ => break,
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    c => {
+                        self.eat();
+                        string.push(c);
+                    },
+                }
+            }
+            // Ignore the invalid escape sequences.
+        }
+
+        TokenOrTrivia::Token(Token::new(
+            TokenKind::BadToken,
+            self.get_span(),
+        ))
     }
 }
 
