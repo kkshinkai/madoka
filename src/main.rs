@@ -10,7 +10,7 @@ use frontend::TokenOrTrivia;
 use crate::{frontend::Lexer, source::BytePos, diagnostic::DiagnosticEngine};
 
 fn main() {
-    let src = r##"  "hello, world!\n"  "##;
+    let src = r##"  12.23  12/23 "##;
 
     let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
     Lexer::new(src, BytePos::from_usize(0), de.clone()).for_each(|t| {

@@ -685,7 +685,7 @@ impl<'src> Lexer<'src> {
     /// Reads a number.
     fn lex_number(
         &mut self,
-        mut radix: Option<u8>,
+        mut radix: Option<u32>,
         mut exactness: Option<bool>
     ) -> TokenOrTrivia {
         // Read all the prefixs.
@@ -735,14 +735,59 @@ impl<'src> Lexer<'src> {
         //     }
         // }
 
+        let radix = radix.unwrap_or(10);
+
         let mut number = String::new();
-        while let Some(next) = self.peek() {
-            if next.has_that(|c| c.is_digit(10)) {
+        while self.peek_that(|c| c.is_digit(radix)) {
+            number.push(self.eat().unwrap().unwrap());
+        }
+
+        if self.peek_is('.') {
+            number.push(self.eat().unwrap().unwrap());
+
+            while self.peek_that(|c| c.is_digit(radix)) {
                 number.push(self.eat().unwrap().unwrap());
-            } else if next.has_that(|c| spec::is_delimiter(*c)) {
-                break;
+            }
+
+            if !self.peek_that(spec::is_delimiter) {
+                while !self.peek_that(spec::is_delimiter) {
+                    self.eat();
+                }
+
+                return TokenOrTrivia::Token(Token::new(
+                    TokenKind::BadToken,
+                    self.get_span(),
+                ));
             } else {
-                continue;
+                return TokenOrTrivia::Token(Token::new(
+                    TokenKind::Number(Complex::Real(Real::Float(number.parse().unwrap()))),
+                    self.get_span(),
+                ));
+            }
+        } else if self.peek_is('/') {
+            self.eat();
+            let mut denominator = String::new();
+            while self.peek_that(|c| c.is_digit(radix)) {
+                denominator.push(self.eat().unwrap().unwrap());
+            }
+
+            if !self.peek_that(spec::is_delimiter) {
+                while !self.peek_that(spec::is_delimiter) {
+                    self.eat();
+                }
+
+                return TokenOrTrivia::Token(Token::new(
+                    TokenKind::BadToken,
+                    self.get_span(),
+                ));
+            } else {
+                return TokenOrTrivia::Token(Token::new(
+                    TokenKind::Number(Complex::Real(Real::Frac(
+                        number.parse().unwrap(),
+                        denominator.parse().unwrap(),
+                    ))),
+                    self.get_span(),
+                ));
             }
         }
 
