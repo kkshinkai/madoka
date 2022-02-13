@@ -5,16 +5,19 @@ use super::diagnostic::{Diagnostic, Level};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticEngine {
     pub diags: Vec<Diagnostic>,
+    pub error_count: usize,
 }
 
 impl DiagnosticEngine {
     pub fn new() -> Self {
         DiagnosticEngine {
             diags: Vec::new(),
+            error_count: 0,
         }
     }
 
     pub fn error(&mut self, span: Span, message: String) {
+        self.error_count += 1;
         self.diags.push(Diagnostic {
             level: Level::Error,
             message,
@@ -36,6 +39,10 @@ impl DiagnosticEngine {
             message,
             span,
         });
+    }
+
+    pub fn has_error(&self) -> bool {
+        self.error_count > 0
     }
 }
 

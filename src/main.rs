@@ -3,19 +3,27 @@ mod frontend;
 mod diagnostic;
 mod utils;
 
-use std::{rc::Rc, cell::RefCell};
+use std::{rc::Rc, cell::RefCell, io::{self, Write}};
 
-use frontend::TokenOrTrivia;
+use frontend::CompilationUnit;
 
 use crate::{frontend::Lexer, source::BytePos, diagnostic::DiagnosticEngine};
 
 fn main() {
-    let src = r##"  12.23  12/23 "##;
 
-    let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
-    Lexer::new(src, BytePos::from_usize(0), de.clone()).for_each(|t| {
-        println!("{:?} {}..{}", t.kind, t.span.start.to_usize(), t.span.end.to_usize());
-    });
+    let mut unit = CompilationUnit::new();
 
-    de.borrow().emit();
+    loop {
+        print!("> ");
+        io::stdout().flush().unwrap();
+
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .expect("error: failed to readline");
+
+        let file = unit.files.load_repl(input);
+
+        unit.lex(file);
+    }
 }
