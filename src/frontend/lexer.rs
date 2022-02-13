@@ -337,77 +337,37 @@ impl<'src> Iterator for Lexer<'src> {
     }
 }
 
-// mod spec {
-//     use crate::frontend::token::Number;
-
-//     /// The delimiter characters to separate identifiers and some literals.
-//     ///
-//     /// ```plain
-//     /// delimiter -> whitespace | vertical-line | '(' | ')' | '\"' | ';'
-//     /// ```
-//     ///
-//     /// According to R7RS section 7.1.1:
-//     ///
-//     /// - Identifiers that do not begin with a vertical line are terminated by
-//     ///   a `delimiter` or by the end of the input. So are dot, numbers,
-//     ///   characters, and booleans.
-//     /// - Identifiers that begin with a vertical line are terminated by another
-//     ///   vertical line.
-//     ///
-//     /// Notice that some Scheme implementations don't do the right thing. We
-//     /// need to follow the R7RS spec here.
-//     ///
-//     /// ```scheme
-//     /// abc|def|ghi ; should be parsed as three tokens: "abc", "def", and "ghi",
-//     ///             ; not as one token "abcdefghi".
-//     /// ```
-//     pub fn is_delimiter(c: char) -> bool {
-//         [
-//             '\r', '\n',              // Line ending
-//             ' ', '\t',               // Whitespace
-//             '(', ')', '"', ';', '|', // Else
-//             '[', ']', '{', '}'       // Non-standard
-//         ].contains(&c)
-//     }
-
-//     /// Check if the character is a Scheme whitespace.
-//     ///
-//     /// ```plain
-//     /// whitespace -> intraline-whitespace | line-ending
-//     /// ```
-//     pub fn is_whitespace(c: char) -> bool {
-//         is_intraline_whitespace(c) || is_line_ending(c)
-//     }
-
-//     /// Space or tab.
-//     ///
-//     /// ```plain
-//     /// intraline-whitespace -> space-or-tab
-//     /// ```
-//     pub fn is_intraline_whitespace(c: char) -> bool {
-//         c == ' ' || c == '\t'
-//     }
-
-//     /// Is line feed or carriage return.
-//     ///
-//     /// ```plain
-//     /// line-ending -> newline | return newline | return
-//     /// ```
-//     pub fn is_line_ending(c: char) -> bool {
-//         c == '\n' || c == '\r'
-//     }
-// }
-
-// // '+', '-', is_digit => lex_number
-// //
-// // '#' ==> '|'                          ==> lex_block_comment
-// //       | 'b', 'o', 'd', 'x', 'e', 'i' ==> lex_number_with_prefix
-// //       | '\'                          ==> lex_character
-// //       | ';'                          ==> lex_datum_comment (todo)
-// //       | is_digit                     ==> lex_label
-// //       | is_delimiter                 ==> identifier
-// //       | _                            ==> bad_token_until_delimiter
-// // _   ==>
+mod spec {
+    /// The delimiter characters to separate identifiers and some literals.
+    ///
+    /// ```text
+    /// delimiter ::=
+    ///     | whitespace
+    ///     | vertical-line
+    ///     | '('
+    ///     | ')'
+    ///     | '\"'
+    ///     | ';'
+    /// ```
+    ///
+    /// According to R7RS section 7.1.1:
+    ///
+    /// - Identifiers that do not begin with a vertical line are terminated by
+    ///   a `delimiter` or by the end of the input. So are dot, numbers,
+    ///   characters, and booleans.
+    /// - Identifiers that begin with a vertical line are terminated by another
+    ///   vertical line.
+    ///
+    pub fn is_delimiter(c: char) -> bool {
+        [
+            '\r', '\n',              // Line ending
+            ' ', '\t',               // Whitespace
+            '(', ')', '"', ';', '|', // Else
+            '[', ']', '{', '}'       // Non-standard
+        ]
+        .contains(&c)
+    }
+}
 
 enum TokenOrTrivia { // Keep this private
     Token(Token),
@@ -422,7 +382,8 @@ impl<'src> Lexer<'src> {
                     '\n' | '\r' => self.lex_line_ending(),
                     '(' | ')' | '[' | ']' | '{' | '}' => self.lex_paren(),
                     ' ' | '\t' => self.lex_whitespace(),
-                    // '#' => self.lex_number_sign_prefix(),
+                    '#' => self.lex_number_sign_prefix(),
+                    ';' => self.lex_line_comment(),
                     _ => todo!(),
                 }
             } else {
@@ -587,6 +548,22 @@ impl<'src> Lexer<'src> {
         let span = self.get_span();
         self.error_unclosed_comments(span);
         TokenOrTrivia::Token(Token::new(TokenKind::BadToken, span))
+    }
+
+    fn lex_line_comment(&mut self) -> TokenOrTrivia {
+        assert!(self.eat_is(';'));
+        while !self.peek_any(&['\n', '\r']) {
+            let newline = self.eat().unwrap().unwrap();
+
+            // Handle CRLF.
+            if newline == '\r' && self.peek_is('\n') {
+                self.eat();
+            }
+        }
+        TokenOrTrivia::Trivia(Trivia {
+            kind: TriviaKind::LineComment,
+            span: self.get_span(),
+        })
     }
 }
 
