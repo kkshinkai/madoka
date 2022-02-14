@@ -33,64 +33,8 @@ pub struct CharStream<'src> {
     pub curr_pos: BytePos,
 
     diag: Rc<RefCell<DiagnosticEngine>>,
-    peeked: Option<(Char, BytePos)>,
+    peeked: Option<(char, BytePos)>,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Char {
-    Char(char),
-    Escape(char),
-    InvalidEscape,
-}
-
-impl Char {
-    pub fn char(self) -> Option<char> {
-        match self {
-            Char::Char(c) => Some(c),
-            Char::Escape(c) => Some(c),
-            Char::InvalidEscape => None,
-        }
-    }
-
-    pub fn contains(self, c: char) -> bool {
-        match self {
-            Char::Char(ch) => ch == c,
-            Char::Escape(ch) => ch == c,
-            Char::InvalidEscape => false,
-        }
-    }
-
-    pub fn is_valid(self) -> bool {
-        !self.is_invalid()
-    }
-
-    pub fn is_invalid(self) -> bool {
-        self == Char::InvalidEscape
-    }
-
-    pub fn unwrap(self) -> char {
-        match self {
-            Char::Char(c) => c,
-            Char::Escape(c) => c,
-            Char::InvalidEscape => {
-                panic!("called `Char::unwrap()` on a `InvalidEscape` value");
-            },
-        }
-    }
-}
-
-impl HasThat<char> for Char {
-    fn has_that<F>(&self, cond: F) -> bool
-        where F: Fn(&char) -> bool
-    {
-        match self {
-            Char::Char(c) => cond(c),
-            Char::Escape(c) => cond(c),
-            Char::InvalidEscape => false,
-        }
-    }
-}
-
 
 impl<'src> CharStream<'src> {
     /// Create a new Scheme character stream from a source string.
@@ -108,7 +52,7 @@ impl<'src> CharStream<'src> {
     }
 
     /// Returns and consumes the next character in the source string.
-    pub fn eat(&mut self) -> Option<Char> {
+    pub fn eat(&mut self) -> Option<char> {
         if let Some((c, pos)) = self.peeked.take() {
             self.curr_pos = pos;
             Some(c)
@@ -126,7 +70,7 @@ impl<'src> CharStream<'src> {
     /// consumed. If there is a problem with the escape sequence, a diagnostic
     /// will also be generated. The read `Char` will be cached in `self.peeked`
     /// for further use.
-    pub fn peek(&mut self) -> Option<Char> {
+    pub fn peek(&mut self) -> Option<char> {
         if let Some((c, _)) = self.peeked {
             Some(c)
         } else {
@@ -142,7 +86,7 @@ impl<'src> CharStream<'src> {
     /// `self.peeked` is empty.
     ///
     /// Don't invoke it in any function other than `peek` or `eat`.
-    fn peek_without_cache(&mut self) -> Option<(Char, BytePos)> {
+    fn peek_without_cache(&mut self) -> Option<(char, BytePos)> {
         if let Some(next) = self.chars.next() {
             let mut cs = self.chars.clone();
             if cs.next() == Some('x') {
@@ -163,35 +107,29 @@ impl<'src> CharStream<'src> {
                         end: self.curr_pos.offset(hex.as_bytes().len() + 3),
                     };
                     if let Some(c) = c {
-                        return Some((Char::Escape(c), span.end));
+                        return Some((c, span.end));
                     } else {
                         self.error_invalid_escape(span, hex.as_str());
-                        return Some((Char::InvalidEscape, span.end));
+                        return self.peek_without_cache();
                     }
                 }
             }
-            Some((Char::Char(next), self.curr_pos.offset(next.len_utf8())))
+            Some((next, self.curr_pos.offset(next.len_utf8())))
         } else {
             None
         }
     }
 
     pub fn peek_a(&mut self, c: char) -> bool {
-        self.peek()
-            .map(|char| char.contains(c))
-            .unwrap_or(false)
+        self.peek().has_a(&c)
     }
 
     pub fn peek_any(&mut self, chars: &[char]) -> bool {
-        self.peek()
-            .map(|char| chars.iter().any(|&c| char.contains(c)))
-            .unwrap_or(false)
+        self.peek().has_any_of(chars)
     }
 
     pub fn peek_that<F>(&mut self, cond: F) -> bool where F: Fn(char) -> bool {
-        self.peek()
-            .map(|char| char.has_that(|&c| cond(c)))
-            .unwrap_or(false)
+        self.peek().has_that(|&c| cond(c))
     }
 
     pub fn eat_a(&mut self, c: char) {
@@ -204,7 +142,7 @@ impl<'src> CharStream<'src> {
 
     pub fn eat_that<F>(&mut self, cond: F) where F: Fn(&char) -> bool {
         match self.eat() {
-            Some(char) if char.has_that(cond) => (),
+            Some(c) if cond(&c) => (),
             Some(_) => {
                 panic!("called `CharStream::eat_that()` on an invalid character");
             },
@@ -215,11 +153,11 @@ impl<'src> CharStream<'src> {
     }
 
     pub fn force_peek(&mut self) -> char {
-        self.peek().unwrap().unwrap()
+        self.peek().unwrap()
     }
 
     pub fn force_eat(&mut self) -> char {
-        self.eat().unwrap().unwrap()
+        self.eat().unwrap()
     }
 
     /// Reports an error for an invalid escape sequence.
@@ -230,7 +168,7 @@ impl<'src> CharStream<'src> {
 }
 
 impl Iterator for CharStream<'_> {
-    type Item = Char;
+    type Item = char;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.eat()
@@ -245,9 +183,9 @@ mod char_stream_tests {
     fn test_simple_string() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("abc", BytePos::from_usize(0), de);
-        assert_eq!(cs.eat(), Some(Char::Char('a')));
-        assert_eq!(cs.eat(), Some(Char::Char('b')));
-        assert_eq!(cs.eat(), Some(Char::Char('c')));
+        assert_eq!(cs.eat(), Some('a'));
+        assert_eq!(cs.eat(), Some('b'));
+        assert_eq!(cs.eat(), Some('c'));
         assert_eq!(cs.eat(), None);
     }
 
@@ -255,9 +193,9 @@ mod char_stream_tests {
     fn test_escape_sequence() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("a\\x62;c", BytePos::from_usize(0), de);
-        assert_eq!(cs.eat(), Some(Char::Char('a')));
-        assert_eq!(cs.eat(), Some(Char::Escape('b')));
-        assert_eq!(cs.eat(), Some(Char::Char('c')));
+        assert_eq!(cs.eat(), Some('a'));
+        assert_eq!(cs.eat(), Some('b'));
+        assert_eq!(cs.eat(), Some('c'));
         assert_eq!(cs.eat(), None);
     }
 
@@ -266,12 +204,12 @@ mod char_stream_tests {
     fn test_non_escape_sequence() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("a\\x62c", BytePos::from_usize(0), de);
-        assert_eq!(cs.eat(), Some(Char::Char('a')));
-        assert_eq!(cs.eat(), Some(Char::Char('\\')));
-        assert_eq!(cs.eat(), Some(Char::Char('x')));
-        assert_eq!(cs.eat(), Some(Char::Char('6')));
-        assert_eq!(cs.eat(), Some(Char::Char('2')));
-        assert_eq!(cs.eat(), Some(Char::Char('c')));
+        assert_eq!(cs.eat(), Some('a'));
+        assert_eq!(cs.eat(), Some('\\'));
+        assert_eq!(cs.eat(), Some('x'));
+        assert_eq!(cs.eat(), Some('6'));
+        assert_eq!(cs.eat(), Some('2'));
+        assert_eq!(cs.eat(), Some('c'));
         assert_eq!(cs.eat(), None);
     }
 
@@ -279,9 +217,8 @@ mod char_stream_tests {
     fn test_invaild_escape_sequence() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("a\\x999999;c", BytePos::from_usize(0), de);
-        assert_eq!(cs.eat(), Some(Char::Char('a')));
-        assert_eq!(cs.eat(), Some(Char::InvalidEscape));
-        assert_eq!(cs.eat(), Some(Char::Char('c')));
+        assert_eq!(cs.eat(), Some('a'));
+        assert_eq!(cs.eat(), Some('c'));
         assert_eq!(cs.eat(), None);
     }
 
@@ -289,10 +226,10 @@ mod char_stream_tests {
     fn test_peek() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("ab", BytePos::from_usize(0), de);
-        assert_eq!(cs.peek(), Some(Char::Char('a')));
-        assert_eq!(cs.eat(), Some(Char::Char('a')));
-        assert_eq!(cs.peek(), Some(Char::Char('b')));
-        assert_eq!(cs.eat(), Some(Char::Char('b')));
+        assert_eq!(cs.peek(), Some('a'));
+        assert_eq!(cs.eat(), Some('a'));
+        assert_eq!(cs.peek(), Some('b'));
+        assert_eq!(cs.eat(), Some('b'));
         assert_eq!(cs.peek(), None);
         assert_eq!(cs.eat(), None);
     }
@@ -303,11 +240,11 @@ mod char_stream_tests {
         let mut cs = CharStream::new("abc", BytePos::from_usize(0), de);
 
         assert!(cs.peek_a('a'));
-        assert_eq!(cs.eat(), Some(Char::Char('a')));
+        assert_eq!(cs.eat(), Some('a'));
         assert!(cs.peek_a('b'));
-        assert_eq!(cs.eat(), Some(Char::Char('b')));
+        assert_eq!(cs.eat(), Some('b'));
         assert!(cs.peek_a('c'));
-        assert_eq!(cs.eat(), Some(Char::Char('c')));
+        assert_eq!(cs.eat(), Some('c'));
         assert_eq!(cs.eat(), None);
     }
 
@@ -318,7 +255,7 @@ mod char_stream_tests {
 
         assert!(cs.peek_any(&['a', 'b', 'c']));
         assert!(!cs.peek_any(&['b', 'c', 'd']));
-        assert_eq!(cs.eat(), Some(Char::Char('a')));
+        assert_eq!(cs.eat(), Some('a'));
         assert_eq!(cs.eat(), None);
     }
 
@@ -329,7 +266,7 @@ mod char_stream_tests {
 
         assert!(cs.peek_that(|c| c == 'a'));
         assert!(!cs.peek_that(|c| c == 'b'));
-        assert_eq!(cs.eat(), Some(Char::Char('a')));
+        assert_eq!(cs.eat(), Some('a'));
         assert_eq!(cs.eat(), None);
     }
 }
@@ -581,17 +518,9 @@ impl<'src> Lexer<'src> {
     pub fn lex_token_or_trivia(&mut self) -> Option<TokenOrTrivia> {
         // I don't use `Option::map` here because the debugger doesn't support
         // higher-order functions well. And here is the entry point of the
-        // lexer.
+        // lexer
 
-        if self.chars.peek()?.is_invalid() {
-            self.chars.eat();
-            return Some(TokenOrTrivia::Trivia(Trivia {
-                kind: TriviaKind::BadEscape,
-                span: self.take_span(),
-            }));
-        }
-
-        Some(match self.chars.force_peek() {
+        let t = match self.chars.peek()? {
             '(' | ')' | '[' | ']' | '{' | '}' => self.lex_paren(),
             ' ' | '\t' => self.lex_whitespace(),
             '#' => self.lex_number_sign_prefix(),
@@ -604,7 +533,9 @@ impl<'src> Lexer<'src> {
             '\n' | '\r' => self.lex_line_ending(),
 
             _ => todo!(),
-        })
+        };
+
+        Some(t)
     }
 
     /// Reads a line ending (CR, LF, or CRLF) from source.
@@ -699,31 +630,25 @@ impl<'src> Lexer<'src> {
         self.chars.eat_a('#');
 
         if let Some(next) = self.chars.peek() {
-            if next.has_a(&'|') {
-                self.lex_block_comment()
-            } else if next.has_that(|&c| spec::is_number_prefix(c)) {
-                let prefix = self.chars.force_eat();
-                match prefix {
-                    'b' | 'B' => self.lex_number(Some(2), None),
-                    'o' | 'O' => self.lex_number(Some(8), None),
-                    'd' | 'D' => self.lex_number(Some(10), None),
-                    'x' | 'X' => self.lex_number(Some(16), None),
-                    'i' | 'I' => self.lex_number(None, Some(true)),
-                    'e' | 'E' => self.lex_number(None, Some(false)),
-                    _ => unreachable!(),
+            match next {
+                '|' => self.lex_block_comment(),
+                '\\' => self.lex_character(),
+                c if spec::is_number_prefix(next) => {
+                    let prefix = self.chars.force_eat();
+                    match prefix {
+                        'b' | 'B' => self.lex_number(Some(2), None),
+                        'o' | 'O' => self.lex_number(Some(8), None),
+                        'd' | 'D' => self.lex_number(Some(10), None),
+                        'x' | 'X' => self.lex_number(Some(16), None),
+                        'i' | 'I' => self.lex_number(None, Some(true)),
+                        'e' | 'E' => self.lex_number(None, Some(false)),
+                        _ => unreachable!(),
+                    }
                 }
-            } else if next.has_a(&'\\') {
-                self.lex_character()
-            } else if next.is_valid()  {
-                todo!() // Read to the end.
-            } else {
-                // Found a bad escape (considered as delimiter) after `#`.
-                TokenOrTrivia::Token(Token::new(
-                    TokenKind::Ident("#".to_string()),
-                    self.take_span()
-                ))
+                _ => todo!(),
             }
         } else {
+            // TBD: Is `#` a valid identifier?
             TokenOrTrivia::Token(Token::new(
                 TokenKind::BadToken,
                 self.take_span()
@@ -739,12 +664,12 @@ impl<'src> Lexer<'src> {
         let mut nest = 1;
 
         while let Some(next) = self.chars.eat() {
-            match next.char() {
-                Some('#') if self.chars.peek_a('|') => {
+            match next {
+                '#' if self.chars.peek_a('|') => {
                     self.chars.eat_a('|'); // Eat '|'.
                     nest += 1;
                 },
-                Some('|') if self.chars.peek_a('#') => {
+                '|' if self.chars.peek_a('#') => {
                     self.chars.eat_a('#'); // Eat '#'.
                     nest -= 1;
                     if nest == 0 {
@@ -754,15 +679,7 @@ impl<'src> Lexer<'src> {
                         });
                     }
                 },
-                _ => {
-                    // There are two cases in this branch:
-                    //
-                    // - The next char is a normal character `Some(char)` in
-                    //   comment, ignore them;
-                    // - The next char is `None`, which means we got an invalid
-                    //   escape sequence. We don't need to do anything here,
-                    //   `CharStream` will report the error;
-                }
+                _ => {},
             }
         }
 
@@ -790,14 +707,10 @@ impl<'src> Lexer<'src> {
     fn lex_identifier(&mut self) -> TokenOrTrivia {
         let mut ident = String::new();
         while let Some(c) = self.chars.peek() {
-            if c.has_that(|c| spec::is_delimiter(*c)) {
+            if spec::is_delimiter(c) {
                 break;
-            } else if c.has_that(|c| spec::is_identifier_body(*c)) {
+            } else if spec::is_identifier_body(c) {
                 ident.push(self.chars.force_eat());
-            } else if c.is_invalid() {
-                // Found a bad escape, just ignore it. The identifier will not
-                // be cut off.
-                continue;
             } else {
                 // Found a invalid character in identifier, just ignore it.
                 continue;
@@ -977,78 +890,76 @@ impl<'src> Lexer<'src> {
 
         let mut string = String::new();
         while let Some(c) = self.chars.peek() {
-            if let Some(next) = c.char() {
-                match next {
-                    '"' => {
-                        self.chars.eat();
-                        return TokenOrTrivia::Token(Token::new(
-                            TokenKind::String(string),
-                            self.take_span(),
-                        ));
-                    },
-                    '\\' => {
-                        self.chars.eat();
-                        if let Some(next) = self.chars.peek() {
-                            match next.char() {
-                                Some('a') => {
+            match c {
+                '"' => {
+                    self.chars.eat();
+                    return TokenOrTrivia::Token(Token::new(
+                        TokenKind::String(string),
+                        self.take_span(),
+                    ));
+                },
+                '\\' => {
+                    self.chars.eat();
+                    if let Some(next) = self.chars.peek() {
+                        match next {
+                            'a' => {
+                                self.chars.eat();
+                                string.push('\x07');
+                            },
+                            'b' => {
+                                self.chars.eat();
+                                string.push('\x08');
+                            },
+                            't' => {
+                                self.chars.eat();
+                                string.push('\t');
+                            },
+                            'n' => {
+                                self.chars.eat();
+                                string.push('\n');
+                            },
+                            'r' => {
+                                self.chars.eat();
+                                string.push('\r');
+                            },
+                            '"' => {
+                                self.chars.eat();
+                                string.push('"');
+                            },
+                            '\\' => {
+                                self.chars.eat();
+                                string.push('\\');
+                            },
+                            ' ' | '\t' | '\n' | '\r' => {
+                                while self.chars.peek_any(&[' ', '\t']) {
                                     self.chars.eat();
-                                    string.push('\x07');
-                                },
-                                Some('b') => {
-                                    self.chars.eat();
-                                    string.push('\x08');
-                                },
-                                Some('t') => {
-                                    self.chars.eat();
-                                    string.push('\t');
-                                },
-                                Some('n') => {
-                                    self.chars.eat();
-                                    string.push('\n');
-                                },
-                                Some('r') => {
-                                    self.chars.eat();
-                                    string.push('\r');
-                                },
-                                Some('"') => {
-                                    self.chars.eat();
-                                    string.push('"');
-                                },
-                                Some('\\') => {
-                                    self.chars.eat();
-                                    string.push('\\');
-                                },
-                                Some(' ' | '\t' | '\n' | '\r') => {
-                                    while self.chars.peek_any(&[' ', '\t']) {
+                                }
+                                if self.chars.peek_any(&['\r', '\n']) {
+                                    let next = self.chars.force_eat();
+                                    if next == '\r' {
                                         self.chars.eat();
-                                    }
-                                    if self.chars.peek_any(&['\r', '\n']) {
-                                        let next = self.chars.force_eat();
-                                        if next == '\r' {
+                                        if self.chars.peek_a('\n') {
                                             self.chars.eat();
-                                            if self.chars.peek_a('\n') {
-                                                self.chars.eat();
-                                            }
                                         }
-                                    } else {
-                                        // TODO: error
-                                        break;
                                     }
-                                    while self.chars.peek_any(&[' ', '\t']) {
-                                        self.chars.eat();
-                                    }
-                                },
-                                _ => break,
-                            }
-                        } else {
-                            break;
+                                } else {
+                                    // TODO: error
+                                    break;
+                                }
+                                while self.chars.peek_any(&[' ', '\t']) {
+                                    self.chars.eat();
+                                }
+                            },
+                            _ => break,
                         }
+                    } else {
+                        break;
                     }
-                    c => {
-                        self.chars.eat();
-                        string.push(c);
-                    },
                 }
+                c => {
+                    self.chars.eat();
+                    string.push(c);
+                },
             }
             // Ignore the invalid escape sequences.
         }
@@ -1064,9 +975,7 @@ impl<'src> Lexer<'src> {
 impl Lexer<'_> {
     fn eat_until_delimiter(&mut self, buf: &mut String) {
         while let Some(c) = self.chars.peek() {
-            if c.is_invalid() {
-                self.chars.eat();
-            } else if !spec::is_delimiter(c.unwrap()) {
+            if !spec::is_delimiter(c) {
                 buf.push(self.chars.force_eat());
             } else {
                 return;
