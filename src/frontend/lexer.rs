@@ -52,6 +52,14 @@ impl Char {
         }
     }
 
+    pub fn contains(self, c: char) -> bool {
+        match self {
+            Char::Char(ch) => ch == c,
+            Char::Escape(ch) => ch == c,
+            Char::InvalidEscape => false,
+        }
+    }
+
     pub fn is_valid(self) -> bool {
         !self.is_invalid()
     }
@@ -64,7 +72,9 @@ impl Char {
         match self {
             Char::Char(c) => c,
             Char::Escape(c) => c,
-            Char::InvalidEscape => panic!(),
+            Char::InvalidEscape => {
+                panic!("called `Char::unwrap()` on a `InvalidEscape` value");
+            },
         }
     }
 }
@@ -101,10 +111,12 @@ impl<'src> CharStream<'src> {
     pub fn eat(&mut self) -> Option<Char> {
         if let Some((c, pos)) = self.peeked.take() {
             self.curr_pos = pos;
-            return Some(c);
+            Some(c)
         } else {
-            self.peeked = self.peek_without_cache();
-            self.peeked.map(|(c, _)| c)
+            self.peek_without_cache().map(|(c, pos)| {
+                self.curr_pos = pos;
+                c
+            })
         }
     }
 
@@ -164,6 +176,44 @@ impl<'src> CharStream<'src> {
         }
     }
 
+    pub fn peek_a(&mut self, c: char) -> bool {
+        self.peek()
+            .map(|char| char.contains(c))
+            .unwrap_or(false)
+    }
+
+    pub fn peek_any(&mut self, chars: &[char]) -> bool {
+        self.peek()
+            .map(|char| chars.iter().any(|&c| char.contains(c)))
+            .unwrap_or(false)
+    }
+
+    pub fn peek_that<F>(&mut self, cond: F) -> bool where F: Fn(&char) -> bool {
+        self.peek()
+            .map(|char| char.has_that(cond))
+            .unwrap_or(false)
+    }
+
+    pub fn eat_a(&mut self, c: char) {
+        self.eat_that(|&char| char == c);
+    }
+
+    pub fn eat_any(&mut self, chars: &[char]) {
+        self.eat_that(|&char| chars.iter().any(|&c| char == c));
+    }
+
+    pub fn eat_that<F>(&mut self, cond: F) where F: Fn(&char) -> bool {
+        match self.eat() {
+            Some(char) if char.has_that(cond) => (),
+            Some(_) => {
+                panic!("called `CharStream::eat_that()` on an invalid character");
+            },
+            None => {
+                panic!("called `CharStream::eat_that()` at the end of the stream");
+            },
+        }
+    }
+
     /// Reports an error for an invalid escape sequence.
     fn error_invalid_escape(&mut self, span: Span, seq: &str) {
         self.diag.borrow_mut()
@@ -187,9 +237,9 @@ mod char_stream_tests {
     fn test_simple_string() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("abc", BytePos::from_usize(0), de);
-        assert!(cs.eat().has_a(&Char::Char('a')));
-        assert!(cs.eat().has_a(&Char::Char('b')));
-        assert!(cs.eat().has_a(&Char::Char('c')));
+        assert_eq!(cs.eat(), Some(Char::Char('a')));
+        assert_eq!(cs.eat(), Some(Char::Char('b')));
+        assert_eq!(cs.eat(), Some(Char::Char('c')));
         assert_eq!(cs.eat(), None);
     }
 
@@ -197,9 +247,9 @@ mod char_stream_tests {
     fn test_escape_sequence() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("a\\x62;c", BytePos::from_usize(0), de);
-        assert!(cs.eat().has_a(&Char::Char('a')));
-        assert!(cs.eat().has_a(&Char::Escape('b')));
-        assert!(cs.eat().has_a(&Char::Char('c')));
+        assert_eq!(cs.eat(), Some(Char::Char('a')));
+        assert_eq!(cs.eat(), Some(Char::Escape('b')));
+        assert_eq!(cs.eat(), Some(Char::Char('c')));
         assert_eq!(cs.eat(), None);
     }
 
@@ -208,12 +258,12 @@ mod char_stream_tests {
     fn test_non_escape_sequence() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("a\\x62c", BytePos::from_usize(0), de);
-        assert!(cs.eat().has_a(&Char::Char('a')));
-        assert!(cs.eat().has_a(&Char::Char('\\')));
-        assert!(cs.eat().has_a(&Char::Char('x')));
-        assert!(cs.eat().has_a(&Char::Char('6')));
-        assert!(cs.eat().has_a(&Char::Char('2')));
-        assert!(cs.eat().has_a(&Char::Char('c')));
+        assert_eq!(cs.eat(), Some(Char::Char('a')));
+        assert_eq!(cs.eat(), Some(Char::Char('\\')));
+        assert_eq!(cs.eat(), Some(Char::Char('x')));
+        assert_eq!(cs.eat(), Some(Char::Char('6')));
+        assert_eq!(cs.eat(), Some(Char::Char('2')));
+        assert_eq!(cs.eat(), Some(Char::Char('c')));
         assert_eq!(cs.eat(), None);
     }
 
@@ -221,9 +271,9 @@ mod char_stream_tests {
     fn test_invaild_escape_sequence() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("a\\x999999;c", BytePos::from_usize(0), de);
-        assert!(cs.eat().has_a(&Char::Char('a')));
-        assert!(cs.eat().has_a(&Char::InvalidEscape));
-        assert!(cs.eat().has_a(&Char::Char('c')));
+        assert_eq!(cs.eat(), Some(Char::Char('a')));
+        assert_eq!(cs.eat(), Some(Char::InvalidEscape));
+        assert_eq!(cs.eat(), Some(Char::Char('c')));
         assert_eq!(cs.eat(), None);
     }
 
@@ -231,10 +281,47 @@ mod char_stream_tests {
     fn test_peek() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("ab", BytePos::from_usize(0), de);
-        assert!(cs.peek().has_a(&Char::Char('a')));
-        assert!(cs.eat().has_a(&Char::Char('a')));
-        assert!(cs.peek().has_a(&Char::Char('b')));
-        assert!(cs.eat().has_a(&Char::Char('b')));
+        assert_eq!(cs.peek(), Some(Char::Char('a')));
+        assert_eq!(cs.eat(), Some(Char::Char('a')));
+        assert_eq!(cs.peek(), Some(Char::Char('b')));
+        assert_eq!(cs.eat(), Some(Char::Char('b')));
+        assert_eq!(cs.peek(), None);
+        assert_eq!(cs.eat(), None);
+    }
+
+    #[test]
+    fn test_peek_a_char() {
+        let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
+        let mut cs = CharStream::new("abc", BytePos::from_usize(0), de);
+
+        assert!(cs.peek_a('a'));
+        assert_eq!(cs.eat(), Some(Char::Char('a')));
+        assert!(cs.peek_a('b'));
+        assert_eq!(cs.eat(), Some(Char::Char('b')));
+        assert!(cs.peek_a('c'));
+        assert_eq!(cs.eat(), Some(Char::Char('c')));
+        assert_eq!(cs.eat(), None);
+    }
+
+    #[test]
+    fn test_peek_any_char() {
+        let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
+        let mut cs = CharStream::new("a", BytePos::from_usize(0), de);
+
+        assert!(cs.peek_any(&['a', 'b', 'c']));
+        assert!(!cs.peek_any(&['b', 'c', 'd']));
+        assert_eq!(cs.eat(), Some(Char::Char('a')));
+        assert_eq!(cs.eat(), None);
+    }
+
+    #[test]
+    fn test_peek_that_char() {
+        let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
+        let mut cs = CharStream::new("a", BytePos::from_usize(0), de);
+
+        assert!(cs.peek_that(|&c| c == 'a'));
+        assert!(!cs.peek_that(|&c| c == 'b'));
+        assert_eq!(cs.eat(), Some(Char::Char('a')));
         assert_eq!(cs.eat(), None);
     }
 }
@@ -262,6 +349,7 @@ impl<'src> Lexer<'src> {
         }
     }
 
+    #[deprecated]
     fn eat_char(&mut self) -> Option<Char> {
         self.chars.next().map(|c| {
             self.curr_span.end = self.chars.curr_pos;
@@ -269,6 +357,7 @@ impl<'src> Lexer<'src> {
         })
     }
 
+    #[deprecated]
     fn peek_char(&mut self) -> Option<Char> {
         self.chars.peek()
     }
@@ -280,32 +369,38 @@ impl<'src> Lexer<'src> {
         result
     }
 
+    #[deprecated]
     fn peek_a(&mut self, char: char) -> bool {
         self.peek_char().map(|c| c.has_a(&char)).unwrap_or(false)
     }
 
+    #[deprecated]
     fn peek_any(&mut self, chars: &[char]) -> bool {
         self.peek_char()
             .map(|ch| chars.iter().any(|&c| ch.has_a(&c)))
             .unwrap_or(false)
     }
 
+    #[deprecated]
     fn peek_that<F>(&mut self, pred: F) -> bool
         where F: Fn(char) -> bool,
     {
         self.peek_char().map(|c| c.has_that(|&c| pred(c))).unwrap_or(false)
     }
 
+    #[deprecated]
     fn eat_a(&mut self, char: char) -> bool {
         self.eat_char().map(|c| c.has_a(&char)).unwrap_or(false)
     }
 
+    #[deprecated]
     fn eat_any(&mut self, chars: &[char]) -> bool {
         self.eat_char()
             .map(|ch| chars.iter().any(|&c| ch.has_a(&c)))
             .unwrap_or(false)
     }
 
+    #[deprecated]
     fn eat_that<F>(&mut self, pred: F) -> bool
         where F: Fn(char) -> bool,
     {
