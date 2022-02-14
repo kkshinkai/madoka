@@ -214,6 +214,14 @@ impl<'src> CharStream<'src> {
         }
     }
 
+    pub fn force_peek(&mut self) -> char {
+        self.peek().unwrap().unwrap()
+    }
+
+    pub fn force_eat(&mut self) -> char {
+        self.eat().unwrap().unwrap()
+    }
+
     /// Reports an error for an invalid escape sequence.
     fn error_invalid_escape(&mut self, span: Span, seq: &str) {
         self.diag.borrow_mut()
@@ -583,7 +591,7 @@ impl<'src> Lexer<'src> {
             }));
         }
 
-        Some(match self.chars.peek().unwrap().unwrap() {
+        Some(match self.chars.force_peek() {
             '\n' | '\r' => self.lex_line_ending(),
             '(' | ')' | '[' | ']' | '{' | '}' => self.lex_paren(),
             ' ' | '\t' => self.lex_whitespace(),
@@ -605,7 +613,7 @@ impl<'src> Lexer<'src> {
     ///     | return
     /// ```
     fn lex_line_ending(&mut self) -> TokenOrTrivia {
-        let next = self.chars.eat().unwrap().unwrap();
+        let next = self.chars.force_eat();
         assert!(next == '\n' || next == '\r');
 
         TokenOrTrivia::Trivia(
@@ -643,7 +651,7 @@ impl<'src> Lexer<'src> {
     ///
     /// The `[`, `]`, `{` and `}` should also be `delimiter`.
     fn lex_paren(&mut self) -> TokenOrTrivia {
-        let next = self.chars.eat().unwrap().unwrap();
+        let next = self.chars.force_eat();
         assert!(['(', ')', '[', ']', '{', '}'].contains(&next));
 
         let kind = match next {
@@ -672,7 +680,7 @@ impl<'src> Lexer<'src> {
     ///
     /// The co
     fn lex_whitespace(&mut self) -> TokenOrTrivia {
-        let next = self.chars.eat().unwrap().unwrap();
+        let next = self.chars.force_eat();
         assert!(next == ' ' || next == '\t');
 
         while self.chars.peek_any(&[' ', '\t']) {
@@ -691,7 +699,7 @@ impl<'src> Lexer<'src> {
             if next.has_a(&'|') {
                 self.lex_block_comment()
             } else if next.has_that(|&c| spec::is_number_prefix(c)) {
-                let prefix = self.chars.eat().unwrap().unwrap();
+                let prefix = self.chars.force_eat();
                 match prefix {
                     'b' | 'B' => self.lex_number(Some(2), None),
                     'o' | 'O' => self.lex_number(Some(8), None),
@@ -763,7 +771,7 @@ impl<'src> Lexer<'src> {
     fn lex_line_comment(&mut self) -> TokenOrTrivia {
         self.chars.eat_a(';');
         while !self.chars.peek_any(&['\n', '\r']) {
-            let newline = self.chars.eat().unwrap().unwrap();
+            let newline = self.chars.force_eat();
 
             // Handle CRLF.
             if newline == '\r' && self.chars.peek_a('\n') {
@@ -782,7 +790,7 @@ impl<'src> Lexer<'src> {
             if c.has_that(|c| spec::is_delimiter(*c)) {
                 break;
             } else if c.has_that(|c| spec::is_identifier_body(*c)) {
-                ident.push(self.chars.eat().unwrap().unwrap());
+                ident.push(self.chars.force_eat());
             } else if c.is_invalid() {
                 // Found a bad escape, just ignore it. The identifier will not
                 // be cut off.
@@ -856,14 +864,14 @@ impl<'src> Lexer<'src> {
 
         let mut number = String::new();
         while self.chars.peek_that(|c| c.is_digit(radix)) {
-            number.push(self.chars.eat().unwrap().unwrap());
+            number.push(self.chars.force_eat());
         }
 
         if self.chars.peek_a('.') {
-            number.push(self.chars.eat().unwrap().unwrap());
+            number.push(self.chars.force_eat());
 
             while self.chars.peek_that(|c| c.is_digit(radix)) {
-                number.push(self.chars.eat().unwrap().unwrap());
+                number.push(self.chars.force_eat());
             }
 
             if !self.chars.peek_that(spec::is_delimiter) {
@@ -885,7 +893,7 @@ impl<'src> Lexer<'src> {
             self.chars.eat();
             let mut denominator = String::new();
             while self.chars.peek_that(|c| c.is_digit(radix)) {
-                denominator.push(self.chars.eat().unwrap().unwrap());
+                denominator.push(self.chars.force_eat());
             }
 
             if !self.chars.peek_that(spec::is_delimiter) {
@@ -920,13 +928,13 @@ impl<'src> Lexer<'src> {
 
         if self.chars.peek_that(spec::is_delimiter) {
             return TokenOrTrivia::Token(Token::new(
-                TokenKind::Char(self.chars.eat().unwrap().unwrap()),
+                TokenKind::Char(self.chars.force_eat()),
                 self.take_span(),
             ));
         }
 
         while self.chars.peek().is_some() && !self.chars.peek_that(spec::is_delimiter) {
-            char.push(self.chars.eat().unwrap().unwrap());
+            char.push(self.chars.force_eat());
         }
 
         let kind = match char.as_str() {
@@ -1020,7 +1028,7 @@ impl<'src> Lexer<'src> {
                                         self.chars.eat();
                                     }
                                     if self.chars.peek_any(&['\r', '\n']) {
-                                        let next = self.chars.eat().unwrap().unwrap();
+                                        let next = self.chars.force_eat();
                                         if next == '\r' {
                                             self.chars.eat();
                                             if self.chars.peek_a('\n') {
