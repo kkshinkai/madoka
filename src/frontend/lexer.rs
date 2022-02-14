@@ -26,6 +26,9 @@ use crate::{
 ///     | a..f
 ///     | A..F
 /// ```
+///
+/// If the escape sequence is invalid, for example overflow `\x99999999;`, the
+/// stream will skip it and add a diagnostic.
 #[derive(Debug, Clone)]
 pub struct CharStream<'src> {
     chars: Peekable<Chars<'src>>,
