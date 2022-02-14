@@ -1,4 +1,4 @@
-use std::{iter::Peekable, str::Chars, rc::Rc, cell::RefCell};
+use std::{iter::Peekable, str::Chars, rc::Rc, cell::RefCell, result};
 
 use crate::{
     source::{Span, BytePos}, diagnostic::DiagnosticEngine, utils::HasThat,
@@ -188,9 +188,9 @@ impl<'src> CharStream<'src> {
             .unwrap_or(false)
     }
 
-    pub fn peek_that<F>(&mut self, cond: F) -> bool where F: Fn(&char) -> bool {
+    pub fn peek_that<F>(&mut self, cond: F) -> bool where F: Fn(char) -> bool {
         self.peek()
-            .map(|char| char.has_that(cond))
+            .map(|char| char.has_that(|&c| cond(c)))
             .unwrap_or(false)
     }
 
@@ -319,8 +319,8 @@ mod char_stream_tests {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("a", BytePos::from_usize(0), de);
 
-        assert!(cs.peek_that(|&c| c == 'a'));
-        assert!(!cs.peek_that(|&c| c == 'b'));
+        assert!(cs.peek_that(|c| c == 'a'));
+        assert!(!cs.peek_that(|c| c == 'b'));
         assert_eq!(cs.eat(), Some(Char::Char('a')));
         assert_eq!(cs.eat(), None);
     }
@@ -334,7 +334,7 @@ pub struct Lexer<'src> {
     cached_token: Option<Token>,
     is_end: bool,
 
-    peeked_token: Option<Token>,
+    // peeked_token: Option<Token>,
 }
 
 impl<'src> Lexer<'src> {
@@ -345,7 +345,7 @@ impl<'src> Lexer<'src> {
             diag,
             cached_token: None,
             is_end: false,
-            peeked_token: None,
+            // peeked_token: None,
         }
     }
 
@@ -362,49 +362,14 @@ impl<'src> Lexer<'src> {
         self.chars.peek()
     }
 
-    fn get_span(&mut self) -> Span {
-        let result = self.curr_span;
+    fn take_span(&mut self) -> Span {
+        // FIXME: Change `self.curr_span` to `self.token_pos`
+        let mut result = self.curr_span;
+        result.end = self.chars.curr_pos;
+
         let new_start_pos = self.chars.curr_pos;
         self.curr_span = Span::new(new_start_pos, new_start_pos);
         result
-    }
-
-    #[deprecated]
-    fn peek_a(&mut self, char: char) -> bool {
-        self.peek_char().map(|c| c.has_a(&char)).unwrap_or(false)
-    }
-
-    #[deprecated]
-    fn peek_any(&mut self, chars: &[char]) -> bool {
-        self.peek_char()
-            .map(|ch| chars.iter().any(|&c| ch.has_a(&c)))
-            .unwrap_or(false)
-    }
-
-    #[deprecated]
-    fn peek_that<F>(&mut self, pred: F) -> bool
-        where F: Fn(char) -> bool,
-    {
-        self.peek_char().map(|c| c.has_that(|&c| pred(c))).unwrap_or(false)
-    }
-
-    #[deprecated]
-    fn eat_a(&mut self, char: char) -> bool {
-        self.eat_char().map(|c| c.has_a(&char)).unwrap_or(false)
-    }
-
-    #[deprecated]
-    fn eat_any(&mut self, chars: &[char]) -> bool {
-        self.eat_char()
-            .map(|ch| chars.iter().any(|&c| ch.has_a(&c)))
-            .unwrap_or(false)
-    }
-
-    #[deprecated]
-    fn eat_that<F>(&mut self, pred: F) -> bool
-        where F: Fn(char) -> bool,
-    {
-        self.eat_char().map(|c| c.has_that(|&c| pred(c))).unwrap_or(false)
     }
 }
 
@@ -430,7 +395,7 @@ impl<'src> Iterator for Lexer<'src> {
             self.is_end = true;
             return Some(Token {
                 kind: TokenKind::Eof,
-                span: self.get_span(),
+                span: self.take_span(),
                 leading_trivia,
                 trailing_trivia: Vec::new(),
             });
@@ -560,7 +525,7 @@ pub enum TokenOrTrivia { // Keep this private
 
 impl<'src> Lexer<'src> {
     pub fn lex_token_or_trivia(&mut self) -> Option<TokenOrTrivia> {
-        self.peek_char().map(|c| {
+        self.chars.peek().map(|c| {
             if let Some(c) = c.char() {
                 match c {
                     '\n' | '\r' => self.lex_line_ending(),
@@ -574,10 +539,10 @@ impl<'src> Lexer<'src> {
                     _ => todo!(),
                 }
             } else {
-                self.eat_char();
+                self.chars.eat();
                 TokenOrTrivia::Trivia(Trivia {
                     kind: TriviaKind::BadEscape,
-                    span: self.get_span(),
+                    span: self.take_span(),
                 })
             }
         })
@@ -592,26 +557,26 @@ impl<'src> Lexer<'src> {
     ///     | return
     /// ```
     fn lex_line_ending(&mut self) -> TokenOrTrivia {
-        let next = self.eat_char().unwrap().unwrap();
+        let next = self.chars.eat().unwrap().unwrap();
         assert!(next == '\n' || next == '\r');
 
         TokenOrTrivia::Trivia(
             match next {
                 '\n' => Trivia { // (1) LF
                     kind: TriviaKind::NewLine(NewLine::Lf),
-                    span: self.get_span(),
+                    span: self.take_span(),
                 },
                 '\r' => {
-                    if self.peek_a('\n') { // (2) CRLF
-                        self.eat_char();
+                    if self.chars.peek_a('\n') { // (2) CRLF
+                        self.chars.eat();
                         Trivia {
                             kind: TriviaKind::NewLine(NewLine::CrLf),
-                            span: self.get_span(),
+                            span: self.take_span(),
                         }
                     } else { // (3) CR
                         Trivia {
                             kind: TriviaKind::NewLine(NewLine::Cr),
-                            span: self.get_span()
+                            span: self.take_span()
                         }
                     }
                 },
@@ -630,7 +595,7 @@ impl<'src> Lexer<'src> {
     ///
     /// The `[`, `]`, `{` and `}` should also be `delimiter`.
     fn lex_paren(&mut self) -> TokenOrTrivia {
-        let next = self.eat_char().unwrap().unwrap();
+        let next = self.chars.eat().unwrap().unwrap();
         assert!(['(', ')', '[', ']', '{', '}'].contains(&next));
 
         let kind = match next {
@@ -643,7 +608,7 @@ impl<'src> Lexer<'src> {
             _ => unreachable!(),
         };
 
-        let span = self.get_span();
+        let span = self.take_span();
         if ['[', ']', '{', '}'].contains(&next) {
             self.error_invalid_paren(span, next)
         }
@@ -659,26 +624,26 @@ impl<'src> Lexer<'src> {
     ///
     /// The co
     fn lex_whitespace(&mut self) -> TokenOrTrivia {
-        let next = self.eat_char().unwrap().unwrap();
+        let next = self.chars.eat().unwrap().unwrap();
         assert!(next == ' ' || next == '\t');
 
-        while self.peek_any(&[' ', '\t']) {
-            self.eat_char();
+        while self.chars.peek_any(&[' ', '\t']) {
+            self.chars.eat();
         }
         TokenOrTrivia::Trivia(Trivia {
             kind: TriviaKind::Whitespace,
-            span: self.get_span(),
+            span: self.take_span(),
         })
     }
 
     fn lex_number_sign_prefix(&mut self) -> TokenOrTrivia {
-        assert!(self.eat_a('#'));
+        self.chars.eat_a('#');
 
-        if let Some(next) = self.peek_char() {
+        if let Some(next) = self.chars.peek() {
             if next.has_a(&'|') {
                 self.lex_block_comment()
             } else if next.has_that(|&c| spec::is_number_prefix(c)) {
-                let prefix = self.eat_char().unwrap().unwrap();
+                let prefix = self.chars.eat().unwrap().unwrap();
                 match prefix {
                     'b' | 'B' => self.lex_number(Some(2), None),
                     'o' | 'O' => self.lex_number(Some(8), None),
@@ -696,13 +661,13 @@ impl<'src> Lexer<'src> {
                 // Found a bad escape (considered as delimiter) after `#`.
                 TokenOrTrivia::Token(Token::new(
                     TokenKind::Ident("#".to_string()),
-                    self.get_span()
+                    self.take_span()
                 ))
             }
         } else {
             TokenOrTrivia::Token(Token::new(
                 TokenKind::BadToken,
-                self.get_span()
+                self.take_span()
             ))
         }
     }
@@ -710,23 +675,23 @@ impl<'src> Lexer<'src> {
     /// Read a `#|...|#`-style comment (assumes the initial "#" has already been
     /// read).
     fn lex_block_comment(&mut self) -> TokenOrTrivia {
-        assert!(self.eat_a('|'));
+        self.chars.eat_a('|');
 
         let mut nest = 1;
 
-        while let Some(next) = self.eat_char() {
+        while let Some(next) = self.chars.eat() {
             match next.char() {
-                Some('#') if self.peek_a('|') => {
-                    self.eat_char(); // Eat '|'.
+                Some('#') if self.chars.peek_a('|') => {
+                    self.chars.eat_a('|'); // Eat '|'.
                     nest += 1;
                 },
-                Some('|') if self.peek_a('#') => {
-                    self.eat_char(); // Eat '#'.
+                Some('|') if self.chars.peek_a('#') => {
+                    self.chars.eat_a('#'); // Eat '#'.
                     nest -= 1;
                     if nest == 0 {
                         return TokenOrTrivia::Trivia(Trivia {
                             kind: TriviaKind::BlockComment,
-                            span: self.get_span(),
+                            span: self.take_span(),
                         });
                     }
                 },
@@ -742,34 +707,34 @@ impl<'src> Lexer<'src> {
             }
         }
 
-        let span = self.get_span();
+        let span = self.take_span();
         self.error_unclosed_comments(span);
         TokenOrTrivia::Token(Token::new(TokenKind::BadToken, span))
     }
 
     fn lex_line_comment(&mut self) -> TokenOrTrivia {
-        assert!(self.eat_a(';'));
-        while !self.peek_any(&['\n', '\r']) {
-            let newline = self.eat_char().unwrap().unwrap();
+        self.chars.eat_a(';');
+        while !self.chars.peek_any(&['\n', '\r']) {
+            let newline = self.chars.eat().unwrap().unwrap();
 
             // Handle CRLF.
-            if newline == '\r' && self.peek_a('\n') {
-                self.eat_char();
+            if newline == '\r' && self.chars.peek_a('\n') {
+                self.chars.eat();
             }
         }
         TokenOrTrivia::Trivia(Trivia {
             kind: TriviaKind::LineComment,
-            span: self.get_span(),
+            span: self.take_span(),
         })
     }
 
     fn lex_identifier(&mut self) -> TokenOrTrivia {
         let mut ident = String::new();
-        while let Some(c) = self.peek_char() {
+        while let Some(c) = self.chars.peek() {
             if c.has_that(|c| spec::is_delimiter(*c)) {
                 break;
             } else if c.has_that(|c| spec::is_identifier_body(*c)) {
-                ident.push(self.eat_char().unwrap().unwrap());
+                ident.push(self.chars.eat().unwrap().unwrap());
             } else if c.is_invalid() {
                 // Found a bad escape, just ignore it. The identifier will not
                 // be cut off.
@@ -782,7 +747,7 @@ impl<'src> Lexer<'src> {
 
         TokenOrTrivia::Token(Token::new(
             TokenKind::Ident(ident),
-            self.get_span(),
+            self.take_span(),
         ))
     }
 
@@ -842,47 +807,47 @@ impl<'src> Lexer<'src> {
         let radix = radix.unwrap_or(10);
 
         let mut number = String::new();
-        while self.peek_that(|c| c.is_digit(radix)) {
-            number.push(self.eat_char().unwrap().unwrap());
+        while self.chars.peek_that(|c| c.is_digit(radix)) {
+            number.push(self.chars.eat().unwrap().unwrap());
         }
 
-        if self.peek_a('.') {
-            number.push(self.eat_char().unwrap().unwrap());
+        if self.chars.peek_a('.') {
+            number.push(self.chars.eat().unwrap().unwrap());
 
-            while self.peek_that(|c| c.is_digit(radix)) {
-                number.push(self.eat_char().unwrap().unwrap());
+            while self.chars.peek_that(|c| c.is_digit(radix)) {
+                number.push(self.chars.eat().unwrap().unwrap());
             }
 
-            if !self.peek_that(spec::is_delimiter) {
-                while !self.peek_that(spec::is_delimiter) {
-                    self.eat_char();
+            if !self.chars.peek_that(spec::is_delimiter) {
+                while !self.chars.peek_that(spec::is_delimiter) {
+                    self.chars.eat();
                 }
 
                 return TokenOrTrivia::Token(Token::new(
                     TokenKind::BadToken,
-                    self.get_span(),
+                    self.take_span(),
                 ));
             } else {
                 return TokenOrTrivia::Token(Token::new(
                     TokenKind::Number(Number::Real(Real::Float(number.parse().unwrap()))),
-                    self.get_span(),
+                    self.take_span(),
                 ));
             }
-        } else if self.peek_a('/') {
-            self.eat_char();
+        } else if self.chars.peek_a('/') {
+            self.chars.eat();
             let mut denominator = String::new();
-            while self.peek_that(|c| c.is_digit(radix)) {
-                denominator.push(self.eat_char().unwrap().unwrap());
+            while self.chars.peek_that(|c| c.is_digit(radix)) {
+                denominator.push(self.chars.eat().unwrap().unwrap());
             }
 
-            if !self.peek_that(spec::is_delimiter) {
-                while !self.peek_that(spec::is_delimiter) {
-                    self.eat_char();
+            if !self.chars.peek_that(spec::is_delimiter) {
+                while !self.chars.peek_that(spec::is_delimiter) {
+                    self.chars.eat();
                 }
 
                 return TokenOrTrivia::Token(Token::new(
                     TokenKind::BadToken,
-                    self.get_span(),
+                    self.take_span(),
                 ));
             } else {
                 return TokenOrTrivia::Token(Token::new(
@@ -890,30 +855,30 @@ impl<'src> Lexer<'src> {
                         number.parse().unwrap(),
                         denominator.parse().unwrap(),
                     ))),
-                    self.get_span(),
+                    self.take_span(),
                 ));
             }
         }
 
         TokenOrTrivia::Token(Token::new(
             TokenKind::Number(Number::Real(Real::Int(number.parse().unwrap()))),
-            self.get_span(),
+            self.take_span(),
         ))
     }
 
     fn lex_character(&mut self) -> TokenOrTrivia {
-        assert!(self.eat_a('\\'));
+        self.chars.eat_a('\\');
         let mut char = String::new();
 
-        if self.peek_that(spec::is_delimiter) {
+        if self.chars.peek_that(spec::is_delimiter) {
             return TokenOrTrivia::Token(Token::new(
-                TokenKind::Char(self.eat_char().unwrap().unwrap()),
-                self.get_span(),
+                TokenKind::Char(self.chars.eat().unwrap().unwrap()),
+                self.take_span(),
             ));
         }
 
-        while self.peek_char().is_some() && !self.peek_that(spec::is_delimiter) {
-            char.push(self.eat_char().unwrap().unwrap());
+        while self.chars.peek().is_some() && !self.chars.peek_that(spec::is_delimiter) {
+            char.push(self.chars.eat().unwrap().unwrap());
         }
 
         let kind = match char.as_str() {
@@ -943,7 +908,7 @@ impl<'src> Lexer<'src> {
             _ => TokenKind::BadToken,
         };
 
-        TokenOrTrivia::Token(Token::new(kind, self.get_span()))
+        TokenOrTrivia::Token(Token::new(kind, self.take_span()))
     }
 
     /// Reads a string literal.
@@ -957,69 +922,69 @@ impl<'src> Lexer<'src> {
     ///     | '\r'
     /// ```
     fn lex_string_literal(&mut self) -> TokenOrTrivia {
-        assert!(self.eat_a('"'));
+        self.chars.eat_a('"');
 
         let mut string = String::new();
-        while let Some(c) = self.peek_char() {
+        while let Some(c) = self.chars.peek() {
             if let Some(next) = c.char() {
                 match next {
                     '"' => {
-                        self.eat_char();
+                        self.chars.eat();
                         return TokenOrTrivia::Token(Token::new(
                             TokenKind::String(string),
-                            self.get_span(),
+                            self.take_span(),
                         ));
                     },
                     '\\' => {
-                        self.eat_char();
-                        if let Some(next) = self.peek_char() {
+                        self.chars.eat();
+                        if let Some(next) = self.chars.peek() {
                             match next.char() {
                                 Some('a') => {
-                                    self.eat_char();
+                                    self.chars.eat();
                                     string.push('\x07');
                                 },
                                 Some('b') => {
-                                    self.eat_char();
+                                    self.chars.eat();
                                     string.push('\x08');
                                 },
                                 Some('t') => {
-                                    self.eat_char();
+                                    self.chars.eat();
                                     string.push('\t');
                                 },
                                 Some('n') => {
-                                    self.eat_char();
+                                    self.chars.eat();
                                     string.push('\n');
                                 },
                                 Some('r') => {
-                                    self.eat_char();
+                                    self.chars.eat();
                                     string.push('\r');
                                 },
                                 Some('"') => {
-                                    self.eat_char();
+                                    self.chars.eat();
                                     string.push('"');
                                 },
                                 Some('\\') => {
-                                    self.eat_char();
+                                    self.chars.eat();
                                     string.push('\\');
                                 },
                                 Some(' ' | '\t' | '\n' | '\r') => {
-                                    while self.peek_any(&[' ', '\t']) {
-                                        self.eat_char();
+                                    while self.chars.peek_any(&[' ', '\t']) {
+                                        self.chars.eat();
                                     }
-                                    if self.peek_any(&['\r', '\n']) {
-                                        let next = self.eat_char().unwrap().unwrap();
+                                    if self.chars.peek_any(&['\r', '\n']) {
+                                        let next = self.chars.eat().unwrap().unwrap();
                                         if next == '\r' {
-                                            self.eat_char();
-                                            if self.peek_a('\n') {
-                                                self.eat_char();
+                                            self.chars.eat();
+                                            if self.chars.peek_a('\n') {
+                                                self.chars.eat();
                                             }
                                         }
                                     } else {
                                         // TODO: error
                                         break;
                                     }
-                                    while self.peek_any(&[' ', '\t']) {
-                                        self.eat_char();
+                                    while self.chars.peek_any(&[' ', '\t']) {
+                                        self.chars.eat();
                                     }
                                 },
                                 _ => break,
@@ -1029,7 +994,7 @@ impl<'src> Lexer<'src> {
                         }
                     }
                     c => {
-                        self.eat_char();
+                        self.chars.eat();
                         string.push(c);
                     },
                 }
@@ -1039,7 +1004,7 @@ impl<'src> Lexer<'src> {
 
         TokenOrTrivia::Token(Token::new(
             TokenKind::BadToken,
-            self.get_span(),
+            self.take_span(),
         ))
     }
 }
