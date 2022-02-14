@@ -31,7 +31,7 @@ pub struct CharStream<'src> {
     pub curr_pos: BytePos,
     diag: Rc<RefCell<DiagnosticEngine>>,
 
-    peeked_char: Option<Char>,
+    peeked: Option<(Char, BytePos)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,7 +93,7 @@ impl<'src> CharStream<'src> {
             chars: src.chars().peekable(),
             curr_pos: start_pos,
             diag,
-            peeked_char: None,
+            peeked: None,
         }
     }
 
@@ -108,10 +108,16 @@ impl<'src> CharStream<'src> {
     /// The invalid escape characters will be treated as a delimiter in the
     /// lexical analysis.
     pub fn read(&mut self) -> Option<Char> {
-        if let Some(c) = self.peeked_char.take() {
+        if let Some((c, pos)) = self.peeked.take() {
+            self.curr_pos = pos;
             return Some(c);
+        } else {
+            self.peeked = self.try_next();
+            self.peeked.map(|(c, _)| c)
         }
+    }
 
+    fn try_next(&mut self) -> Option<(Char, BytePos)> {
         if let Some(next) = self.chars.next() {
             let mut cs = self.chars.clone();
             if cs.next() == Some('x') {
@@ -131,17 +137,15 @@ impl<'src> CharStream<'src> {
                         start: self.curr_pos,
                         end: self.curr_pos.offset(hex.as_bytes().len() + 3),
                     };
-                    self.curr_pos = span.end;
                     if let Some(c) = c {
-                        return Some(Char::Escape(c));
+                        return Some((Char::Escape(c), span.end));
                     } else {
                         self.error_invalid_escape(span, hex.as_str());
-                        return Some(Char::InvalidEscape);
+                        return Some((Char::InvalidEscape, span.end));
                     }
                 }
             }
-            self.curr_pos = self.curr_pos.offset(next.len_utf8());
-            Some(Char::Char(next))
+            Some((Char::Char(next), self.curr_pos.offset(next.len_utf8())))
         } else {
             None
         }
@@ -154,11 +158,11 @@ impl<'src> CharStream<'src> {
 
     /// Peeks the next character without consuming it.
     pub fn peek(&mut self) -> Option<Char> {
-        if let Some(c) = self.peeked_char {
+        if let Some((c, _)) = self.peeked {
             Some(c)
         } else {
-            self.peeked_char = self.read();
-            self.peeked_char
+            self.peeked = self.try_next();
+            self.peeked.map(|(c, _)| c)
         }
     }
 }
