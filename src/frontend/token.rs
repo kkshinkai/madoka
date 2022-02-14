@@ -1,6 +1,6 @@
-use std::fmt::Display;
+use std::fmt::{Display, format};
 
-use crate::source::Span;
+use crate::source::{Span, SourceMgr};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
@@ -19,27 +19,51 @@ impl Token {
             trailing_trivia: Vec::new(),
         }
     }
+
+    pub fn pretty_print(&self, mgr: &SourceMgr) -> String {
+        let kind = match self.kind.clone() {
+            TokenKind::LParen => "left-paren".to_string(),
+            TokenKind::RParen => "right-paren".to_string(),
+            TokenKind::BadLCurly => "bad-left-curly".to_string(),
+            TokenKind::BadRCurly => "bad-right-curly".to_string(),
+            TokenKind::BadLSquare => "bad-left-square".to_string(),
+            TokenKind::BadRSquare => "bad-right-square".to_string(),
+            TokenKind::Char(c) => format!("char-literal '{}'", c.to_string()),
+            TokenKind::Ident(s) => format!("identifier {}", s),
+            TokenKind::Number(n) => format!("number-literal {:?}", n),
+            TokenKind::String(s) => format!("string-literal \"{}\"", s),
+            TokenKind::Eof => "eof".to_string(),
+            TokenKind::BadToken => "bad-token".to_string(),
+        };
+
+        let span = format!("{}..{}", self.span.start.to_usize(), self.span.end.to_usize());
+        let text = mgr.lookup_source(self.span);
+
+        format!("({} {} \"{}\")", kind, span, text)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     LParen,
     RParen,
-    Char(char),
-    Ident(String),
-    Number(Complex),
-    String(String),
-    Eof,
-
     BadLCurly,
     BadRCurly,
     BadLSquare,
     BadRSquare,
+
+    Char(char),
+    Ident(String),
+    Number(Number),
+    String(String),
+    Eof,
+
     BadToken,
 }
 
+
 #[derive(Debug, Clone, PartialEq)]
-pub enum Complex {
+pub enum Number {
     Complex(Real, Real),
     Real(Real),
 }

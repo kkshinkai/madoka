@@ -2,7 +2,7 @@ use std::{iter::Peekable, str::Chars, rc::Rc, cell::RefCell};
 
 use crate::{source::{Span, BytePos}, diagnostic::DiagnosticEngine, utils::HasThat, frontend::lexer::spec::is_delimiter};
 
-use super::token::{Token, Trivia, TokenKind, TriviaKind, NewLine, Complex, Real};
+use super::token::{Token, Trivia, TokenKind, TriviaKind, NewLine, Number, Real};
 
 use unicode_general_category::{get_general_category, GeneralCategory};
 
@@ -760,7 +760,7 @@ impl<'src> Lexer<'src> {
                 ));
             } else {
                 return TokenOrTrivia::Token(Token::new(
-                    TokenKind::Number(Complex::Real(Real::Float(number.parse().unwrap()))),
+                    TokenKind::Number(Number::Real(Real::Float(number.parse().unwrap()))),
                     self.get_span(),
                 ));
             }
@@ -782,7 +782,7 @@ impl<'src> Lexer<'src> {
                 ));
             } else {
                 return TokenOrTrivia::Token(Token::new(
-                    TokenKind::Number(Complex::Real(Real::Frac(
+                    TokenKind::Number(Number::Real(Real::Frac(
                         number.parse().unwrap(),
                         denominator.parse().unwrap(),
                     ))),
@@ -792,7 +792,7 @@ impl<'src> Lexer<'src> {
         }
 
         TokenOrTrivia::Token(Token::new(
-            TokenKind::Number(Complex::Real(Real::Int(number.parse().unwrap()))),
+            TokenKind::Number(Number::Real(Real::Int(number.parse().unwrap()))),
             self.get_span(),
         ))
     }

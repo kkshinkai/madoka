@@ -104,9 +104,12 @@ impl SourceMgr {
 
     /// Returns the source file at the given span.
     pub fn lookup_source(&self, span: Span) -> String {
-        self.lookup_file(span.start())
-            .src[span.start().to_usize()..span.end().to_usize()]
-            .to_string()
+        let file = self.lookup_file(span.start);
+
+        let start = span.start.to_usize() - file.start_pos.to_usize();
+        let end = span.end.to_usize() - file.start_pos.to_usize();
+
+        file.src[start..end].to_string()
     }
 }
 

@@ -50,9 +50,9 @@ impl CompilationUnit {
         if self.diag.borrow().has_error() {
             self.diag.borrow().emit();
         } else {
-            ts.iter().for_each(|t| {
-                println!("{:?} {}..{}", t.kind, t.span.start.to_usize(), t.span.end.to_usize());
-            });
+            ts.iter().for_each(|t|
+                println!("{}", t.pretty_print(&self.files))
+            );
         }
     }
 }
