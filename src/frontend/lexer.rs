@@ -502,8 +502,38 @@ mod spec {
         ['e', 'E', 'i', 'I'].contains(&c)
     }
 
+    pub fn get_exactness_from_prefix(c: char) -> bool {
+        match c {
+            'e' | 'E' => true,
+            'i' | 'I' => false,
+            _ => unreachable!(),
+        }
+    }
+
     pub fn is_number_radix_prefix(c: char) -> bool {
         ['b', 'B', 'o', 'O', 'd', 'D', 'x', 'X'].contains(&c)
+    }
+
+    pub fn get_radix_from_prefix(c: char) -> u32 {
+        match c {
+            'b' | 'B' => 2,
+            'o' | 'O' => 8,
+            'd' | 'D' => 10,
+            'x' | 'X' => 16,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn is_digit(c: char, radix: u32) -> bool {
+        match radix {
+            2 => ('0'..='1').contains(&c),
+            8 => ('0'..='7').contains(&c),
+            10 => ('0'..='9').contains(&c),
+            16 => ('0'..='9').contains(&c)
+               || ('a'..='f').contains(&c)
+               || ('A'..='F').contains(&c),
+            _ => panic!("invalid radix {}", radix),
+        }
     }
 }
 
@@ -524,27 +554,58 @@ pub enum TokenOrTrivia { // Keep this private
 }
 
 impl<'src> Lexer<'src> {
+    /// Lexes a token or trivia.
+    ///
+    /// ```text
+    /// token ::=
+    ///     | identifier
+    ///     | boolean
+    ///     | number
+    ///     | character
+    ///     | string
+    ///     | "("
+    ///     | ")"
+    ///     | "#("
+    ///     | "#u8("
+    ///     | "'"
+    ///     | "`"
+    ///     | ","
+    ///     | ",@"
+    ///     | "."
+    ///
+    /// intertoken-space ::=
+    ///     | atmosphere*
+    /// atmosphere ::=
+    ///     | whitespace
+    ///     | comment
+    ///     | directive
+    /// whitespace ::=
+    ///     | intraline-whitespace
+    ///     | line-ending
+    /// ```
     pub fn lex_token_or_trivia(&mut self) -> Option<TokenOrTrivia> {
-        self.chars.peek().map(|c| {
-            if let Some(c) = c.char() {
-                match c {
-                    '\n' | '\r' => self.lex_line_ending(),
-                    '(' | ')' | '[' | ']' | '{' | '}' => self.lex_paren(),
-                    ' ' | '\t' => self.lex_whitespace(),
-                    '#' => self.lex_number_sign_prefix(),
-                    ';' => self.lex_line_comment(),
-                    '"' => self.lex_string_literal(),
-                    _ if spec::is_identifier_head(c) => self.lex_identifier(),
-                    '0'..='9' => self.lex_number(None, None),
-                    _ => todo!(),
-                }
-            } else {
-                self.chars.eat();
-                TokenOrTrivia::Trivia(Trivia {
-                    kind: TriviaKind::BadEscape,
-                    span: self.take_span(),
-                })
-            }
+        // I don't use `Option::map` here because the debugger doesn't support
+        // higher-order functions well. And here is the entry point of the
+        // lexer.
+
+        if self.chars.peek()?.is_invalid() {
+            self.chars.eat();
+            return Some(TokenOrTrivia::Trivia(Trivia {
+                kind: TriviaKind::BadEscape,
+                span: self.take_span(),
+            }));
+        }
+
+        Some(match self.chars.peek().unwrap().unwrap() {
+            '\n' | '\r' => self.lex_line_ending(),
+            '(' | ')' | '[' | ']' | '{' | '}' => self.lex_paren(),
+            ' ' | '\t' => self.lex_whitespace(),
+            '#' => self.lex_number_sign_prefix(),
+            ';' => self.lex_line_comment(),
+            '"' => self.lex_string_literal(),
+            c if spec::is_identifier_head(c) => self.lex_identifier(),
+            '0'..='9' => self.lex_number(None, None),
+            _ => todo!(),
         })
     }
 
