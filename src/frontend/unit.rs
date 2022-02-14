@@ -35,4 +35,24 @@ impl CompilationUnit {
             });
         }
     }
+
+    pub fn lex_repl(&mut self, file: Rc<SourceFile>) {
+        // Lex with a new diagnostic engine (not the default one).
+        // This is not a good implementation.
+        let lexer = Lexer::new(
+            file.src.as_str(),
+            file.start_pos,
+            Rc::new(RefCell::new(DiagnosticEngine::new()))
+        );
+
+        let ts = lexer.collect::<Vec<_>>();
+
+        if self.diag.borrow().has_error() {
+            self.diag.borrow().emit();
+        } else {
+            ts.iter().for_each(|t| {
+                println!("{:?} {}..{}", t.kind, t.span.start.to_usize(), t.span.end.to_usize());
+            });
+        }
+    }
 }

@@ -3,11 +3,9 @@ mod frontend;
 mod diagnostic;
 mod utils;
 
-use std::{rc::Rc, cell::RefCell, io::{self, Write}};
+use std::io::{self, Write};
 
 use frontend::CompilationUnit;
-
-use crate::{frontend::Lexer, source::BytePos, diagnostic::DiagnosticEngine};
 
 fn main() {
 
@@ -24,6 +22,6 @@ fn main() {
 
         let file = unit.files.load_repl(input);
 
-        unit.lex(file);
+        unit.lex_repl(file);
     }
 }

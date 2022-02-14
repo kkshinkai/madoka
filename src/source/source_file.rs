@@ -58,6 +58,10 @@ impl SourceFile {
         }
     }
 
+    pub fn is_repl(&self) -> bool {
+        self.path.is_repl()
+    }
+
     /// Finds the line containing the given position.
     ///
     /// The return value is the index into the `lines` array of this
@@ -159,6 +163,12 @@ pub enum FilePath {
 
     /// The source code read from REPL.
     Repl(u64),
+}
+
+impl FilePath {
+    pub fn is_repl(&self) -> bool {
+        matches!(self, FilePath::Repl(_))
+    }
 }
 
 /// Represents a multi-byte UTF-8 unicode scalar in the source code.
