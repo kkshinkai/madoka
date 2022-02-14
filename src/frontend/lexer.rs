@@ -1,10 +1,13 @@
 use std::{iter::Peekable, str::Chars, rc::Rc, cell::RefCell};
 
-use crate::{source::{Span, BytePos}, diagnostic::DiagnosticEngine, utils::HasThat, frontend::lexer::spec::is_delimiter};
-
-use super::token::{Token, Trivia, TokenKind, TriviaKind, NewLine, Number, Real};
-
-use unicode_general_category::{get_general_category, GeneralCategory};
+use crate::{
+    source::{Span, BytePos}, diagnostic::DiagnosticEngine, utils::HasThat,
+    frontend::token::{
+        Token, TokenKind,
+        Trivia, TriviaKind,
+        NewLine, Number, Real
+    },
+};
 
 /// Streams for pre-processing Scheme escape sequences (`\x<hexdigits>;`).
 ///
@@ -25,12 +28,11 @@ use unicode_general_category::{get_general_category, GeneralCategory};
 /// ```
 #[derive(Debug, Clone)]
 pub struct CharStream<'src> {
-    pub src: &'src str,
     chars: Peekable<Chars<'src>>,
 
     pub curr_pos: BytePos,
-    diag: Rc<RefCell<DiagnosticEngine>>,
 
+    diag: Rc<RefCell<DiagnosticEngine>>,
     peeked: Option<(Char, BytePos)>,
 }
 
@@ -50,9 +52,8 @@ impl Char {
         }
     }
 
-    #[deprecated]
-    pub fn is_a(self, c: char) -> bool {
-        self.char() == Some(c)
+    pub fn is_valid(self) -> bool {
+        !self.is_invalid()
     }
 
     pub fn is_invalid(self) -> bool {
@@ -89,7 +90,6 @@ impl<'src> CharStream<'src> {
         diag: Rc<RefCell<DiagnosticEngine>>
     ) -> Self {
         CharStream {
-            src,
             chars: src.chars().peekable(),
             curr_pos: start_pos,
             diag,
@@ -97,27 +97,40 @@ impl<'src> CharStream<'src> {
         }
     }
 
-    /// Returns the next character in the source string.
-    ///
-    /// - If the character stream is empty, returns `Ok(None)`;
-    /// - If the next character `c` or an escape sequence is found, returns
-    ///   `Ok(Some(c))`;
-    /// - If the escaped sequence read is not a legal Unicode scalar, returns
-    ///   `Err(char_stream_error)`;
-    ///
-    /// The invalid escape characters will be treated as a delimiter in the
-    /// lexical analysis.
-    pub fn read(&mut self) -> Option<Char> {
+    /// Returns and consumes the next character in the source string.
+    pub fn eat(&mut self) -> Option<Char> {
         if let Some((c, pos)) = self.peeked.take() {
             self.curr_pos = pos;
             return Some(c);
         } else {
-            self.peeked = self.try_next();
+            self.peeked = self.peek_without_cache();
             self.peeked.map(|(c, _)| c)
         }
     }
 
-    fn try_next(&mut self) -> Option<(Char, BytePos)> {
+    /// Peeks the next character without consuming it.
+    ///
+    /// When peeking at a character for the first time, iterator `self.chars` is
+    /// consumed. If there is a problem with the escape sequence, a diagnostic
+    /// will also be generated. The read `Char` will be cached in `self.peeked`
+    /// for further use.
+    pub fn peek(&mut self) -> Option<Char> {
+        if let Some((c, _)) = self.peeked {
+            Some(c)
+        } else {
+            self.peeked = self.peek_without_cache();
+            self.peeked.map(|(c, _)| c)
+        }
+    }
+
+    /// Peeks the next character and the position after reading it.
+    ///
+    /// This is a non-cached version of `peek`, it reads the next character and
+    /// return it. `peek` and `eat` will call this function if the cache
+    /// `self.peeked` is empty.
+    ///
+    /// Don't invoke it in any function other than `peek` or `eat`.
+    fn peek_without_cache(&mut self) -> Option<(Char, BytePos)> {
         if let Some(next) = self.chars.next() {
             let mut cs = self.chars.clone();
             if cs.next() == Some('x') {
@@ -155,23 +168,13 @@ impl<'src> CharStream<'src> {
         self.diag.borrow_mut()
             .error(span, format!("invalid escape sequence \\x{};", seq));
     }
-
-    /// Peeks the next character without consuming it.
-    pub fn peek(&mut self) -> Option<Char> {
-        if let Some((c, _)) = self.peeked {
-            Some(c)
-        } else {
-            self.peeked = self.try_next();
-            self.peeked.map(|(c, _)| c)
-        }
-    }
 }
 
 impl Iterator for CharStream<'_> {
     type Item = Char;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.read()
+        self.eat()
     }
 }
 
@@ -183,20 +186,20 @@ mod char_stream_tests {
     fn test_simple_string() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("abc", BytePos::from_usize(0), de);
-        assert!(cs.read().has_a(&Char::Char('a')));
-        assert!(cs.read().has_a(&Char::Char('b')));
-        assert!(cs.read().has_a(&Char::Char('c')));
-        assert_eq!(cs.read(), None);
+        assert!(cs.eat().has_a(&Char::Char('a')));
+        assert!(cs.eat().has_a(&Char::Char('b')));
+        assert!(cs.eat().has_a(&Char::Char('c')));
+        assert_eq!(cs.eat(), None);
     }
 
     #[test]
     fn test_escape_sequence() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("a\\x62;c", BytePos::from_usize(0), de);
-        assert!(cs.read().has_a(&Char::Char('a')));
-        assert!(cs.read().has_a(&Char::Escape('b')));
-        assert!(cs.read().has_a(&Char::Char('c')));
-        assert_eq!(cs.read(), None);
+        assert!(cs.eat().has_a(&Char::Char('a')));
+        assert!(cs.eat().has_a(&Char::Escape('b')));
+        assert!(cs.eat().has_a(&Char::Char('c')));
+        assert_eq!(cs.eat(), None);
     }
 
 
@@ -204,23 +207,23 @@ mod char_stream_tests {
     fn test_non_escape_sequence() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("a\\x62c", BytePos::from_usize(0), de);
-        assert!(cs.read().has_a(&Char::Char('a')));
-        assert!(cs.read().has_a(&Char::Char('\\')));
-        assert!(cs.read().has_a(&Char::Char('x')));
-        assert!(cs.read().has_a(&Char::Char('6')));
-        assert!(cs.read().has_a(&Char::Char('2')));
-        assert!(cs.read().has_a(&Char::Char('c')));
-        assert_eq!(cs.read(), None);
+        assert!(cs.eat().has_a(&Char::Char('a')));
+        assert!(cs.eat().has_a(&Char::Char('\\')));
+        assert!(cs.eat().has_a(&Char::Char('x')));
+        assert!(cs.eat().has_a(&Char::Char('6')));
+        assert!(cs.eat().has_a(&Char::Char('2')));
+        assert!(cs.eat().has_a(&Char::Char('c')));
+        assert_eq!(cs.eat(), None);
     }
 
     #[test]
     fn test_invaild_escape_sequence() {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("a\\x999999;c", BytePos::from_usize(0), de);
-        assert!(cs.read().has_a(&Char::Char('a')));
-        assert!(cs.read().has_a(&Char::InvalidEscape));
-        assert!(cs.read().has_a(&Char::Char('c')));
-        assert_eq!(cs.read(), None);
+        assert!(cs.eat().has_a(&Char::Char('a')));
+        assert!(cs.eat().has_a(&Char::InvalidEscape));
+        assert!(cs.eat().has_a(&Char::Char('c')));
+        assert_eq!(cs.eat(), None);
     }
 
     #[test]
@@ -228,10 +231,10 @@ mod char_stream_tests {
         let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
         let mut cs = CharStream::new("ab", BytePos::from_usize(0), de);
         assert!(cs.peek().has_a(&Char::Char('a')));
-        assert!(cs.read().has_a(&Char::Char('a')));
+        assert!(cs.eat().has_a(&Char::Char('a')));
         assert!(cs.peek().has_a(&Char::Char('b')));
-        assert!(cs.read().has_a(&Char::Char('b')));
-        assert_eq!(cs.read(), None);
+        assert!(cs.eat().has_a(&Char::Char('b')));
+        assert_eq!(cs.eat(), None);
     }
 }
 
@@ -589,7 +592,7 @@ impl<'src> Lexer<'src> {
                 }
             } else if next.has_a(&'\\') {
                 self.lex_character()
-            } else if next.char().is_some()  {
+            } else if next.is_valid()  {
                 todo!() // Read to the end.
             } else {
                 // Found a bad escape (considered as delimiter) after `#`.
