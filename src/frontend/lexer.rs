@@ -592,7 +592,6 @@ impl<'src> Lexer<'src> {
         }
 
         Some(match self.chars.force_peek() {
-            '\n' | '\r' => self.lex_line_ending(),
             '(' | ')' | '[' | ']' | '{' | '}' => self.lex_paren(),
             ' ' | '\t' => self.lex_whitespace(),
             '#' => self.lex_number_sign_prefix(),
@@ -600,6 +599,10 @@ impl<'src> Lexer<'src> {
             '"' => self.lex_string_literal(),
             c if spec::is_identifier_head(c) => self.lex_identifier(),
             '0'..='9' => self.lex_number(None, None),
+
+            // intraline-whitespace (space and tab)
+            '\n' | '\r' => self.lex_line_ending(),
+
             _ => todo!(),
         })
     }
@@ -814,51 +817,43 @@ impl<'src> Lexer<'src> {
         mut exactness: Option<bool>
     ) -> TokenOrTrivia {
         // Read all the prefixs.
-        // while self.peek_is('#') {
-        //     self.eat();
-        //     if let Some(prefix) = self.peek() {
-        //         match prefix.char() {
-        //             Some('b' | 'B') => {
-        //                 if radix.is_some() {
-        //                     panic!()
-        //                 }
-        //                 radix = Some(2);
-        //             },
-        //             Some('o' | 'O') => {
-        //                 if radix.is_some() {
-        //                     panic!()
-        //                 }
-        //                 radix = Some(8);
-        //             },
-        //             Some('d' | 'D') => {
-        //                 if radix.is_some() {
-        //                     panic!()
-        //                 }
-        //                 radix = Some(10);
-        //             },
-        //             Some('x' | 'X') => {
-        //                 if radix.is_some() {
-        //                     panic!()
-        //                 }
-        //                 radix = Some(16);
-        //             },
-        //             Some('i' | 'I') => {
-        //                 if exactness.is_some() {
-        //                     panic!()
-        //                 }
-        //                 exactness = Some(true);
-        //             },
-        //             Some('e' | 'E') => {
-        //                 if exactness.is_some() {
-        //                     panic!()
-        //                 }
-        //                 exactness = Some(false);
-        //             },
-        //             Some(c) => todo!(),
-        //             None => todo!(),
-        //         }
-        //     }
-        // }
+        while self.chars.peek_a('#') {
+            self.chars.eat();
+
+            if self.chars.peek_that(spec::is_number_exactness_prefix) {
+                if exactness.is_some() {
+                    self.eat_until_delimiter(&mut String::new());
+                    let span = self.take_span();
+                    self.error_duplicate_exactness_specifier(span);
+                    return TokenOrTrivia::Token(Token::new(
+                        TokenKind::BadToken,
+                        span,
+                    ));
+                } else {
+                    exactness = Some(spec::get_exactness_from_prefix(self.chars.force_eat()));
+                }
+            } else if self.chars.peek_that(spec::is_number_radix_prefix) {
+                if radix.is_some() {
+                    self.eat_until_delimiter(&mut String::new());
+                    let span = self.take_span();
+                    self.error_duplicate_radix_specifier(span);
+                    return TokenOrTrivia::Token(Token::new(
+                        TokenKind::BadToken,
+                        span,
+                    ));
+                } else {
+                    radix = Some(spec::get_radix_from_prefix(self.chars.force_eat()));
+                }
+            } else {
+                self.eat_until_delimiter(&mut String::new());
+                let span = self.take_span();
+                self.error_invalid_specifier(span);
+                return TokenOrTrivia::Token(Token::new(
+                    TokenKind::BadToken,
+                    span,
+                ));
+            }
+        }
 
         let radix = radix.unwrap_or(10);
 
@@ -1067,6 +1062,18 @@ impl<'src> Lexer<'src> {
 
 
 impl Lexer<'_> {
+    fn eat_until_delimiter(&mut self, buf: &mut String) {
+        while let Some(c) = self.chars.peek() {
+            if c.is_invalid() {
+                self.chars.eat();
+            } else if !spec::is_delimiter(c.unwrap()) {
+                buf.push(self.chars.force_eat());
+            } else {
+                return;
+            }
+        }
+    }
+
     fn error_unclosed_comments(&mut self, span: Span) {
         self.diag.borrow_mut().error(
             span,
@@ -1085,6 +1092,27 @@ impl Lexer<'_> {
             span,
             format!("Invalid parenthesis '{}', this parenthesis is not a \
                 legal character in R7RS, please use '{}' instead", paren, instead),
+        );
+    }
+
+    fn error_duplicate_exactness_specifier(&mut self, span: Span) {
+        self.diag.borrow_mut().error(
+            span,
+            "Duplicate exactness specifier".to_string(),
+        );
+    }
+
+    fn error_duplicate_radix_specifier(&mut self, span: Span) {
+        self.diag.borrow_mut().error(
+            span,
+            "Duplicate radix specifier".to_string(),
+        );
+    }
+
+    fn error_invalid_specifier(&mut self, span: Span) {
+        self.diag.borrow_mut().error(
+            span,
+            "Invalid specifier".to_string(),
         );
     }
 }
