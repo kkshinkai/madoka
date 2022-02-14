@@ -349,19 +349,6 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    #[deprecated]
-    fn eat_char(&mut self) -> Option<Char> {
-        self.chars.next().map(|c| {
-            self.curr_span.end = self.chars.curr_pos;
-            c
-        })
-    }
-
-    #[deprecated]
-    fn peek_char(&mut self) -> Option<Char> {
-        self.chars.peek()
-    }
-
     fn take_span(&mut self) -> Span {
         // FIXME: Change `self.curr_span` to `self.token_pos`
         let mut result = self.curr_span;
