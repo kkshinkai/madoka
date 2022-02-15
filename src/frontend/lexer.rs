@@ -1,4 +1,4 @@
-use std::{iter::Peekable, str::Chars, rc::Rc, cell::RefCell, result};
+use std::{iter::Peekable, str::Chars, rc::Rc, cell::RefCell};
 
 use crate::{
     source::{Span, BytePos}, diagnostic::DiagnosticEngine, utils::HasThat,
@@ -147,7 +147,7 @@ pub struct Lexer<'src> {
     diag: Rc<RefCell<DiagnosticEngine>>,
 
     cached_token: Option<Token>,
-    is_end: bool,
+    has_reached_end: bool,
 
     // peeked_token: Option<Token>,
 }
@@ -159,7 +159,7 @@ impl<'src> Lexer<'src> {
             curr_span: Span::new(start_pos, start_pos),
             diag,
             cached_token: None,
-            is_end: false,
+            has_reached_end: false,
             // peeked_token: None,
         }
     }
@@ -179,7 +179,7 @@ impl<'src> Iterator for Lexer<'src> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.is_end { return None }
+        if self.has_reached_end { return None }
 
         let mut token = self.cached_token.take().or_else(|| {
             let mut leading_trivia = Vec::new();
@@ -194,7 +194,7 @@ impl<'src> Iterator for Lexer<'src> {
                     }
                 }
             }
-            self.is_end = true;
+            self.has_reached_end = true;
             return Some(Token {
                 kind: TokenKind::Eof,
                 span: self.take_span(),
