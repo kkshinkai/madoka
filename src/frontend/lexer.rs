@@ -257,43 +257,6 @@ mod spec {
         .contains(&c)
     }
 
-    #[deprecated]
-    pub fn is_identifier_body(c: char) -> bool {
-        is_identifier_head(c) || [
-            GeneralCategory::DecimalNumber,        // Nd (Number, decimal digit)
-            GeneralCategory::SpacingMark,          // Mc (Mark, spacing combining)
-            GeneralCategory::EnclosingMark,        // Me (Mark, enclosing)
-        ].contains(&get_general_category(c))
-    }
-
-    #[deprecated]
-    pub fn is_identifier_head(c: char) -> bool {
-        c == '\u{200C}' || c == '\u{200D}' || [
-            GeneralCategory::UppercaseLetter,      // Lu (Letter, uppercase)
-            GeneralCategory::LowercaseLetter,      // Ll (Letter, lowercase)
-            GeneralCategory::TitlecaseLetter,      // Lt (Letter, titlecase)
-            GeneralCategory::ModifierLetter,       // Lm (Letter, modifier)
-            GeneralCategory::OtherLetter,          // Lo (Letter, other)
-
-            GeneralCategory::NonspacingMark,       // Mn (Mark, nonspacing)
-
-            GeneralCategory::LetterNumber,         // Nl (Number, letter)
-            GeneralCategory::OtherNumber,          // No (Number, other)
-
-            GeneralCategory::DashPunctuation,      // Pd (Punctuation, dash)
-            GeneralCategory::ConnectorPunctuation, // Pc (Punctuation, connector)
-            GeneralCategory::OtherPunctuation,     // Po (Punctuation, other)
-
-            GeneralCategory::CurrencySymbol,       // Sc (Symbol, currency)
-            GeneralCategory::MathSymbol,           // Sm (Symbol, math)
-            GeneralCategory::ModifierSymbol,       // Sk (Symbol, modifier)
-            GeneralCategory::OtherSymbol,          // So (Symbol, other)
-
-            GeneralCategory::PrivateUse, // Co (Private Use)
-        ]
-        .contains(&get_general_category(c))
-    }
-
     pub fn is_unicode_identifier_body(c: char) -> bool {
         assert!(!c.is_ascii());
         is_unicode_identifier_head(c) || [
@@ -542,7 +505,7 @@ impl<'src> Lexer<'src> {
         let t = match self.chars.peek()? {
             '(' | ')' | '[' | ']' | '{' | '}' => self.lex_paren(),
             ' ' | '\t' => self.lex_intraline_whitespace(),
-            '#' => self.lex_number_sign_prefix(),
+            '#' => self.lex_initial_number_sign(),
             ';' => self.lex_line_comment(),
             '"' => self.lex_string(),
             c if spec::is_initial(c) => self.lex_identifier(),
@@ -605,23 +568,23 @@ impl<'src> Lexer<'src> {
     ///
     /// The `[`, `]`, `{` and `}` should also be `delimiter`.
     fn lex_paren(&mut self) -> TokenOrTrivia {
-        let next = self.chars.force_eat();
-        assert!(['(', ')', '[', ']', '{', '}'].contains(&next));
+        let paren = self.chars.force_eat();
+        let span = self.take_span();
 
-        let kind = match next {
+        let kind = match paren {
             '(' => TokenKind::LParen,
             ')' => TokenKind::RParen,
-            '[' => TokenKind::BadLSquare,
-            ']' => TokenKind::BadRSquare,
-            '{' => TokenKind::BadLCurly,
-            '}' => TokenKind::BadRCurly,
+            '[' | '{' => {
+                self.error_invalid_paren(span, paren);
+                TokenKind::LParen
+            },
+            ']' | '}' => {
+                self.error_invalid_paren(span, paren);
+                TokenKind::RParen
+            },
             _ => unreachable!(),
         };
 
-        let span = self.take_span();
-        if ['[', ']', '{', '}'].contains(&next) {
-            self.error_invalid_paren(span, next)
-        }
         TokenOrTrivia::Token(Token::new(kind, span))
     }
 
@@ -646,12 +609,24 @@ impl<'src> Lexer<'src> {
         })
     }
 
-    fn lex_number_sign_prefix(&mut self) -> TokenOrTrivia {
+    /// Lexes tokens that start with `#`.
+    ///
+    /// The following tokens can start with `#`:
+    ///
+    /// - Boolean literals: `#t`, `#f`, `#true` and `#false`;
+    /// - Vectors and byte vectors: `#(`, `#u8(`;
+    /// - Nested comment: `#|...|#`;
+    /// - Datum comments (not supported yet): `#;...`;
+    /// - Character literals, for example, `#\c`;
+    /// - Number literals with prefixes, for example, `#e#o123`;
+    /// - Directive (not supported yet): `#!fold-case` and `#!no-fold-case`;
+    ///
+    fn lex_initial_number_sign(&mut self) -> TokenOrTrivia {
         self.chars.eat_a('#');
 
         if let Some(next) = self.chars.peek() {
             match next {
-                '|' => self.lex_block_comment(),
+                '|' => self.lex_nested_comment(),
                 '\\' => self.lex_character(),
                 c if spec::is_number_prefix(c) => {
                     let prefix = self.chars.force_eat();
@@ -678,7 +653,7 @@ impl<'src> Lexer<'src> {
 
     /// Read a `#|...|#`-style comment (assumes the initial "#" has already been
     /// read).
-    fn lex_block_comment(&mut self) -> TokenOrTrivia {
+    fn lex_nested_comment(&mut self) -> TokenOrTrivia {
         self.chars.eat_a('|');
 
         let mut nest = 1;
@@ -734,6 +709,11 @@ impl<'src> Lexer<'src> {
     /// ```
     fn lex_identifier(&mut self) -> TokenOrTrivia {
         let mut ident = String::new();
+
+        let initial = self.chars.force_eat();
+        assert!(spec::is_initial(initial));
+        ident.push(initial);
+
         while let Some(c) = self.chars.peek() {
             if spec::is_delimiter(c) {
                 break;
