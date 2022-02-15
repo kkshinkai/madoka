@@ -9,118 +9,33 @@ use crate::{
     },
 };
 
-/// Streams for pre-processing Scheme escape sequences (`\x<hexdigits>;`).
-///
-/// The character stream handles Scheme's hex escape characters and returns them
-/// as a Rust [`char`].
-///
-/// The syntax of the escape sequence is as follows:
-///
-/// ```text
-/// inline-hex-escape ::=
-///     | "\x" hex-scalar-value ";"
-/// hex-scalar-value ::=
-///     | hex-digit+
-/// hex-digit ::=
-///     | 0..9
-///     | a..f
-///     | A..F
-/// ```
-///
-/// If the escape sequence is invalid, for example overflow `\x99999999;`, the
-/// stream will skip it and add a diagnostic.
+/// Streams for pre-processing UTF-8 bytes to Unicode code points.
 #[derive(Debug, Clone)]
 pub struct CharStream<'src> {
-    chars: Peekable<Chars<'src>>,
-
     pub curr_pos: BytePos,
 
-    diag: Rc<RefCell<DiagnosticEngine>>,
-    peeked: Option<(char, BytePos)>,
+    chars: Peekable<Chars<'src>>,
 }
 
 impl<'src> CharStream<'src> {
     /// Create a new Scheme character stream from a source string.
-    pub fn new(
-        src: &'src str,
-        start_pos: BytePos,
-        diag: Rc<RefCell<DiagnosticEngine>>
-    ) -> Self {
+    pub fn new(src: &'src str, start_pos: BytePos) -> Self {
         CharStream {
-            chars: src.chars().peekable(),
             curr_pos: start_pos,
-            diag,
-            peeked: None,
+            chars: src.chars().peekable(),
         }
     }
 
     /// Returns and consumes the next character in the source string.
     pub fn eat(&mut self) -> Option<char> {
-        if let Some((c, pos)) = self.peeked.take() {
-            self.curr_pos = pos;
-            Some(c)
-        } else {
-            self.peek_without_cache().map(|(c, pos)| {
-                self.curr_pos = pos;
-                c
-            })
-        }
+        let next = self.chars.next()?;
+        self.curr_pos = self.curr_pos.offset(next.len_utf8());
+        Some(next)
     }
 
     /// Peeks at the next character without consuming it.
-    ///
-    /// When peeking at a character for the first time, iterator `self.chars` is
-    /// consumed. If there is a problem with the escape sequence, a diagnostic
-    /// will also be generated. The read `Char` will be cached in `self.peeked`
-    /// for further use.
     pub fn peek(&mut self) -> Option<char> {
-        if let Some((c, _)) = self.peeked {
-            Some(c)
-        } else {
-            self.peeked = self.peek_without_cache();
-            self.peeked.map(|(c, _)| c)
-        }
-    }
-
-    /// Peeks the next character and the position after reading it.
-    ///
-    /// This is a non-cached version of `peek`, it reads the next character and
-    /// returns it. `peek` and `eat` will call this function if the cache
-    /// `self.peeked` is empty.
-    ///
-    /// Don't invoke it in any function other than `peek` or `eat`.
-    fn peek_without_cache(&mut self) -> Option<(char, BytePos)> {
-        if let Some(next) = self.chars.next() {
-            let mut cs = self.chars.clone();
-            if cs.next() == Some('x') {
-                let mut hex = String::new();
-                while matches!(cs.peek(), Some('0'..='9' | 'a'..='f' | 'A'..='F')) {
-                    // FIXME: I don't use `c.is_digit(16)` here because I want
-                    // customize the series of character categorization
-                    // functions for Scheme later.
-                    hex.push(cs.next().unwrap());
-                }
-                if cs.next() == Some(';') {
-                    self.chars = cs;
-                    let c = u32::from_str_radix(hex.as_str(), 16)
-                        .ok()
-                        .and_then(|scalar| char::from_u32(scalar));
-                    let span = Span {
-                        start: self.curr_pos,
-                        end: self.curr_pos.offset(hex.as_bytes().len() + 3),
-                    };
-                    if let Some(c) = c {
-                        return Some((c, span.end));
-                    } else {
-                        self.error_invalid_escape(span, hex.as_str());
-                        return self.peek_without_cache();
-                    }
-                }
-            }
-            Some((next, self.curr_pos.offset(next.len_utf8())))
-        } else {
-            None
-        }
+        self.chars.peek().cloned()
     }
 
     pub fn peek_a(&mut self, c: char) -> bool {
@@ -128,7 +43,7 @@ impl<'src> CharStream<'src> {
     }
 
     pub fn peek_any(&mut self, chars: &[char]) -> bool {
-        self.peek().has_any_of(chars)
+        self.peek().has_any(chars)
     }
 
     pub fn peek_that<F>(&mut self, cond: F) -> bool where F: Fn(char) -> bool {
@@ -162,12 +77,6 @@ impl<'src> CharStream<'src> {
     pub fn force_eat(&mut self) -> char {
         self.eat().unwrap()
     }
-
-    /// Reports an error for an invalid escape sequence.
-    fn error_invalid_escape(&mut self, span: Span, seq: &str) {
-        self.diag.borrow_mut()
-            .error(span, format!("invalid escape sequence \\x{};", seq));
-    }
 }
 
 impl Iterator for CharStream<'_> {
@@ -183,9 +92,8 @@ mod char_stream_tests {
     use super::*;
 
     #[test]
-    fn test_simple_string() {
-        let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
-        let mut cs = CharStream::new("abc", BytePos::from_usize(0), de);
+    fn test_eat_char() {
+        let mut cs = CharStream::new("abc", BytePos::from_usize(0));
         assert_eq!(cs.eat(), Some('a'));
         assert_eq!(cs.eat(), Some('b'));
         assert_eq!(cs.eat(), Some('c'));
@@ -193,68 +101,28 @@ mod char_stream_tests {
     }
 
     #[test]
-    fn test_escape_sequence() {
-        let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
-        let mut cs = CharStream::new("a\\x62;c", BytePos::from_usize(0), de);
-        assert_eq!(cs.eat(), Some('a'));
-        assert_eq!(cs.eat(), Some('b'));
-        assert_eq!(cs.eat(), Some('c'));
-        assert_eq!(cs.eat(), None);
-    }
-
-
-    #[test]
-    fn test_non_escape_sequence() {
-        let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
-        let mut cs = CharStream::new("a\\x62c", BytePos::from_usize(0), de);
-        assert_eq!(cs.eat(), Some('a'));
-        assert_eq!(cs.eat(), Some('\\'));
-        assert_eq!(cs.eat(), Some('x'));
-        assert_eq!(cs.eat(), Some('6'));
-        assert_eq!(cs.eat(), Some('2'));
-        assert_eq!(cs.eat(), Some('c'));
-        assert_eq!(cs.eat(), None);
-    }
-
-    #[test]
-    fn test_invaild_escape_sequence() {
-        let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
-        let mut cs = CharStream::new("a\\x999999;c", BytePos::from_usize(0), de);
-        assert_eq!(cs.eat(), Some('a'));
-        assert_eq!(cs.eat(), Some('c'));
-        assert_eq!(cs.eat(), None);
-    }
-
-    #[test]
-    fn test_peek() {
-        let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
-        let mut cs = CharStream::new("ab", BytePos::from_usize(0), de);
+    fn test_peek_char() {
+        let mut cs = CharStream::new("abc", BytePos::from_usize(0));
+        assert_eq!(cs.peek(), Some('a'));
         assert_eq!(cs.peek(), Some('a'));
         assert_eq!(cs.eat(), Some('a'));
+
+        assert_eq!(cs.peek(), Some('b'));
         assert_eq!(cs.peek(), Some('b'));
         assert_eq!(cs.eat(), Some('b'));
+
+        assert_eq!(cs.peek(), Some('c'));
+        assert_eq!(cs.peek(), Some('c'));
+        assert_eq!(cs.eat(), Some('c'));
+
         assert_eq!(cs.peek(), None);
         assert_eq!(cs.eat(), None);
-    }
-
-    #[test]
-    fn test_peek_a_char() {
-        let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
-        let mut cs = CharStream::new("abc", BytePos::from_usize(0), de);
-
-        assert!(cs.peek_a('a'));
-        assert_eq!(cs.eat(), Some('a'));
-        assert!(cs.peek_a('b'));
-        assert_eq!(cs.eat(), Some('b'));
-        assert!(cs.peek_a('c'));
-        assert_eq!(cs.eat(), Some('c'));
         assert_eq!(cs.eat(), None);
     }
 
     #[test]
     fn test_peek_any_char() {
-        let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
-        let mut cs = CharStream::new("a", BytePos::from_usize(0), de);
+        let mut cs = CharStream::new("a", BytePos::from_usize(0));
 
         assert!(cs.peek_any(&['a', 'b', 'c']));
         assert!(!cs.peek_any(&['b', 'c', 'd']));
@@ -264,8 +132,7 @@ mod char_stream_tests {
 
     #[test]
     fn test_peek_that_char() {
-        let de = Rc::new(RefCell::new(DiagnosticEngine::new()));
-        let mut cs = CharStream::new("a", BytePos::from_usize(0), de);
+        let mut cs = CharStream::new("a", BytePos::from_usize(0));
 
         assert!(cs.peek_that(|c| c == 'a'));
         assert!(!cs.peek_that(|c| c == 'b'));
@@ -288,7 +155,7 @@ pub struct Lexer<'src> {
 impl<'src> Lexer<'src> {
     pub fn new(src: &'src str, start_pos: BytePos, diag: Rc<RefCell<DiagnosticEngine>>) -> Self {
         Lexer {
-            chars: CharStream::new(src, start_pos, diag.clone()),
+            chars: CharStream::new(src, start_pos),
             curr_span: Span::new(start_pos, start_pos),
             diag,
             cached_token: None,
