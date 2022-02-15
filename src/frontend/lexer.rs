@@ -390,6 +390,7 @@ mod spec {
         .contains(&c)
     }
 
+    #[deprecated]
     pub fn is_identifier_body(c: char) -> bool {
         is_identifier_head(c) || [
             GeneralCategory::DecimalNumber,        // Nd (Number, decimal digit)
@@ -398,7 +399,45 @@ mod spec {
         ].contains(&get_general_category(c))
     }
 
+    #[deprecated]
     pub fn is_identifier_head(c: char) -> bool {
+        c == '\u{200C}' || c == '\u{200D}' || [
+            GeneralCategory::UppercaseLetter,      // Lu (Letter, uppercase)
+            GeneralCategory::LowercaseLetter,      // Ll (Letter, lowercase)
+            GeneralCategory::TitlecaseLetter,      // Lt (Letter, titlecase)
+            GeneralCategory::ModifierLetter,       // Lm (Letter, modifier)
+            GeneralCategory::OtherLetter,          // Lo (Letter, other)
+
+            GeneralCategory::NonspacingMark,       // Mn (Mark, nonspacing)
+
+            GeneralCategory::LetterNumber,         // Nl (Number, letter)
+            GeneralCategory::OtherNumber,          // No (Number, other)
+
+            GeneralCategory::DashPunctuation,      // Pd (Punctuation, dash)
+            GeneralCategory::ConnectorPunctuation, // Pc (Punctuation, connector)
+            GeneralCategory::OtherPunctuation,     // Po (Punctuation, other)
+
+            GeneralCategory::CurrencySymbol,       // Sc (Symbol, currency)
+            GeneralCategory::MathSymbol,           // Sm (Symbol, math)
+            GeneralCategory::ModifierSymbol,       // Sk (Symbol, modifier)
+            GeneralCategory::OtherSymbol,          // So (Symbol, other)
+
+            GeneralCategory::PrivateUse, // Co (Private Use)
+        ]
+        .contains(&get_general_category(c))
+    }
+
+    pub fn is_unicode_identifier_body(c: char) -> bool {
+        assert!(!c.is_ascii());
+        is_unicode_identifier_head(c) || [
+            GeneralCategory::DecimalNumber,        // Nd (Number, decimal digit)
+            GeneralCategory::SpacingMark,          // Mc (Mark, spacing combining)
+            GeneralCategory::EnclosingMark,        // Me (Mark, enclosing)
+        ].contains(&get_general_category(c))
+    }
+
+    pub fn is_unicode_identifier_head(c: char) -> bool {
+        assert!(!c.is_ascii());
         c == '\u{200C}' || c == '\u{200D}' || [
             GeneralCategory::UppercaseLetter,      // Lu (Letter, uppercase)
             GeneralCategory::LowercaseLetter,      // Ll (Letter, lowercase)
@@ -501,6 +540,75 @@ mod spec {
             _ => panic!("invalid escape \\{}", c),
         }
     }
+
+    /// Returns true if the character is initial of an identifier.
+    ///
+    /// ```text
+    /// initial ::=
+    ///     | letter
+    ///     | special-initial
+    /// ```
+    ///
+    /// See also [`is_letter`], [`is_special_initial`] and
+    /// [`is_unicode_identifier_body`].
+    pub fn is_initial(c: char) -> bool {
+        if c.is_ascii() {
+            is_letter(c) || is_special_initial(c)
+        } else {
+            is_unicode_identifier_head(c)
+        }
+    }
+
+    /// Returns true if the character is an ASCII letter.
+    ///
+    /// ```text
+    /// letter ::=
+    ///     | a | b | c | ... | z
+    ///     | A | B | C | ... | Z
+    /// ```
+    pub fn is_letter(c: char) -> bool {
+        c.is_ascii_alphabetic()
+    }
+
+    /// Returns true if the character is a special initial of an identifier.
+    ///
+    /// ```text
+    /// special-initial ::=
+    ///     | "!" | "$" | "%" | "&" | "*" | "/" | ":"
+    ///     | "<" | "=" | ">" | "?" | "^" | "_" | "~"
+    /// ```
+    pub fn is_special_initial(c: char) -> bool {
+        matches!(c, '!' | '$' | '%' | '&' | '*' | '/' | ':' |
+                    '<' | '=' | '>' | '?' | '^' | '_' | '~')
+    }
+
+    /// Returns true if the character is a subsequent of an identifier.
+    ///
+    /// ```text
+    /// subsequent ::=
+    ///     | initial
+    ///     | digit
+    ///     | special-subsequent
+    /// ```
+    pub fn is_subsequent(c: char) -> bool {
+        if c.is_ascii() {
+            is_initial(c) || is_digit(c, 10) || is_special_subsequent(c)
+        } else {
+            is_unicode_identifier_body(c)
+        }
+    }
+
+    /// Returns true if the character is a special subsequent of an identifier.
+    ///
+    /// ```text
+    /// special-subsequent ::=
+    ///     | explicit-sign
+    ///     | "."
+    ///     | "@"
+    /// ```
+    pub fn is_special_subsequent(c: char) -> bool {
+        matches!(c, '.' | '@' | '+' | '-')
+    }
 }
 
 #[cfg(test)]
@@ -508,9 +616,19 @@ mod spec_tests {
     use super::spec::*;
 
     #[test]
-    fn test_identifier_head() {
-        assert!(is_identifier_head('a'));
-        assert!(!is_identifier_head('0'));
+    fn test_initial() {
+        assert!(!is_initial('+'));
+        assert!(!is_initial('-'));
+
+        assert!(is_initial('a'));
+        assert!(is_initial('_'));
+
+        assert!(!is_initial('0'));
+        assert!(!is_initial('.'));
+
+        assert!(is_initial('🌊'));
+        assert!(is_initial('🍉'));
+        assert!(is_initial('🐨'));
     }
 }
 
@@ -560,7 +678,8 @@ impl<'src> Lexer<'src> {
             '#' => self.lex_number_sign_prefix(),
             ';' => self.lex_line_comment(),
             '"' => self.lex_string(),
-            c if spec::is_identifier_head(c) => self.lex_identifier(),
+            c if spec::is_initial(c) => self.lex_identifier(),
+            // '|' => self.lex_identifier_with_vertical(),
             '0'..='9' => self.lex_number(None, None),
 
             // intraline-whitespace (space and tab)
@@ -738,16 +857,30 @@ impl<'src> Lexer<'src> {
         })
     }
 
+    /// Lexes an identifier.
+    ///
+    /// ```text
+    /// identifier ::=
+    ///     | initial subsequent*
+    ///     | vertical-line symbol-element* vertical-line
+    ///     | peculiar-identifier
+    /// ```
     fn lex_identifier(&mut self) -> TokenOrTrivia {
         let mut ident = String::new();
         while let Some(c) = self.chars.peek() {
             if spec::is_delimiter(c) {
                 break;
-            } else if spec::is_identifier_body(c) {
+            } else if spec::is_subsequent(c) {
                 ident.push(self.chars.force_eat());
             } else {
-                // Found a invalid character in identifier, just ignore it.
-                continue;
+                let span = self.take_span();
+                self.error_invalid_character_in_identfier(span, c);
+
+                self.eat_until_delimiter(&mut ident);
+                return TokenOrTrivia::Token(Token::new(
+                    TokenKind::BadToken,
+                    span,
+                ));
             }
         }
 
@@ -756,6 +889,21 @@ impl<'src> Lexer<'src> {
             self.take_span(),
         ))
     }
+
+    /// Lexes identifiers that start with a vertical line.
+    ///
+    /// This function only handles the second situation below:
+    ///
+    /// ```text
+    /// identifier ::=
+    ///     | initial subsequent*                              (1)
+    ///     | vertical-line symbol-element* vertical-line      (2)
+    ///     | peculiar-identifier                              (3)
+    /// ```
+    // fn lex_identifier_with_vertical(&self) -> TokenOrTrivia {
+        // self.chars.eat_a('|');
+//
+    // }
 
     /// Reads a number.
     fn lex_number(
@@ -1040,6 +1188,18 @@ impl Lexer<'_> {
         self.diag.borrow_mut().error(
             span,
             "Invalid specifier".to_string(),
+        );
+    }
+
+    fn error_invalid_character_in_identfier(&mut self, span: Span, c: char) {
+        self.diag.borrow_mut().error(
+            span,
+            if c == '|' {
+                format!("Invalid character '{}' in identifier", c)
+            } else {
+                format!("'|' is not a legal character in the middle of an \
+                        identifier")
+            }
         );
     }
 }
