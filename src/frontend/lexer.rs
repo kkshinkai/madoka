@@ -461,13 +461,44 @@ mod spec {
 
     pub fn is_digit(c: char, radix: u32) -> bool {
         match radix {
-            2 => ('0'..='1').contains(&c),
-            8 => ('0'..='7').contains(&c),
-            10 => ('0'..='9').contains(&c),
-            16 => ('0'..='9').contains(&c)
-               || ('a'..='f').contains(&c)
-               || ('A'..='F').contains(&c),
+            2 => matches!(c, '0'..='1'),
+            8 => matches!(c, '0'..='7'),
+            10 => matches!(c, '0'..='9'),
+            16 => matches!(c, '0'..='9' | 'a'..='f' | 'A'..='F'),
             _ => panic!("invalid radix {}", radix),
+        }
+    }
+
+    pub fn is_whitespace(c: char) -> bool {
+        matches!(c, '\t' | ' ' | '\n' | '\r')
+    }
+
+    /// Returns true if the character is an escape sequence in string literals.
+    ///
+    /// Includes `mnemonic-escape`, `\"` and `\\`.
+    ///
+    /// ```text
+    /// mnemonic-escape ::=
+    ///     | "\a"
+    ///     | "\b"
+    ///     | "\t"
+    ///     | "\n"
+    ///     | "\r"
+    /// ```
+    pub fn is_string_escape(c: char) -> bool {
+        matches!(c, 'a' | 'b' | 't' | 'n' | 'r' | '\\' | '"')
+    }
+
+    pub fn get_char_from_escape(c: char) -> char {
+        match c {
+            'a' => '\u{0007}',
+            'b' => '\u{0008}',
+            't' => '\t',
+            'n' => '\n',
+            'r' => '\r',
+            '\\' => '\\',
+            '"' => '"',
+            _ => panic!("invalid escape \\{}", c),
         }
     }
 }
@@ -525,10 +556,10 @@ impl<'src> Lexer<'src> {
 
         let t = match self.chars.peek()? {
             '(' | ')' | '[' | ']' | '{' | '}' => self.lex_paren(),
-            ' ' | '\t' => self.lex_whitespace(),
+            ' ' | '\t' => self.lex_intraline_whitespace(),
             '#' => self.lex_number_sign_prefix(),
             ';' => self.lex_line_comment(),
-            '"' => self.lex_string_literal(),
+            '"' => self.lex_string(),
             c if spec::is_identifier_head(c) => self.lex_identifier(),
             '0'..='9' => self.lex_number(None, None),
 
@@ -616,7 +647,7 @@ impl<'src> Lexer<'src> {
     /// ```
     ///
     /// The co
-    fn lex_whitespace(&mut self) -> TokenOrTrivia {
+    fn lex_intraline_whitespace(&mut self) -> TokenOrTrivia {
         let next = self.chars.force_eat();
         assert!(next == ' ' || next == '\t');
 
@@ -636,7 +667,7 @@ impl<'src> Lexer<'src> {
             match next {
                 '|' => self.lex_block_comment(),
                 '\\' => self.lex_character(),
-                c if spec::is_number_prefix(next) => {
+                c if spec::is_number_prefix(c) => {
                     let prefix = self.chars.force_eat();
                     match prefix {
                         'b' | 'B' => self.lex_number(Some(2), None),
@@ -881,14 +912,24 @@ impl<'src> Lexer<'src> {
     /// Reads a string literal.
     ///
     /// ```text
-    /// mnemonic escape ::=
-    ///     | '\a'
-    ///     | '\b'
-    ///     | '\t'
-    ///     | '\n'
-    ///     | '\r'
+    /// string ::=
+    ///     | "\"" string-element* "\""
+    /// string-element
+    ///     | any-character-other-than-"-or-\
+    ///     | mnemonic-escape
+    ///     | "\""
+    ///     | "\\"
+    ///     | "\\" intraline-whitespace* line-ending intraline-whitespace*
+    ///     | inline-hex-escape
+    /// inline-hex-escape
+    ///     | "\x" hex-scalar-value ";"
+    /// hex-scalar-value ::=
+    ///     | hex-digit+
     /// ```
-    fn lex_string_literal(&mut self) -> TokenOrTrivia {
+    ///
+    /// Inline hex escapes are handled by char stream, we don't need to take
+    /// care of them here.
+    fn lex_string(&mut self) -> TokenOrTrivia {
         self.chars.eat_a('"');
 
         let mut string = String::new();
@@ -903,57 +944,32 @@ impl<'src> Lexer<'src> {
                 },
                 '\\' => {
                     self.chars.eat();
-                    if let Some(next) = self.chars.peek() {
-                        match next {
-                            'a' => {
+                    if let Some(c) = self.chars.peek() {
+                        if spec::is_string_escape(c) {
+                            self.chars.eat();
+                            string.push(spec::get_char_from_escape(c));
+                        } else if spec::is_whitespace(c) {
+                            while self.chars.peek_any(&[' ', '\t']) {
                                 self.chars.eat();
-                                string.push('\x07');
-                            },
-                            'b' => {
-                                self.chars.eat();
-                                string.push('\x08');
-                            },
-                            't' => {
-                                self.chars.eat();
-                                string.push('\t');
-                            },
-                            'n' => {
-                                self.chars.eat();
-                                string.push('\n');
-                            },
-                            'r' => {
-                                self.chars.eat();
-                                string.push('\r');
-                            },
-                            '"' => {
-                                self.chars.eat();
-                                string.push('"');
-                            },
-                            '\\' => {
-                                self.chars.eat();
-                                string.push('\\');
-                            },
-                            ' ' | '\t' | '\n' | '\r' => {
-                                while self.chars.peek_any(&[' ', '\t']) {
+                            }
+                            if self.chars.peek_any(&['\r', '\n']) {
+                                let next = self.chars.force_eat();
+                                if next == '\r' {
                                     self.chars.eat();
-                                }
-                                if self.chars.peek_any(&['\r', '\n']) {
-                                    let next = self.chars.force_eat();
-                                    if next == '\r' {
+                                    if self.chars.peek_a('\n') {
                                         self.chars.eat();
-                                        if self.chars.peek_a('\n') {
-                                            self.chars.eat();
-                                        }
                                     }
-                                } else {
-                                    // TODO: error
-                                    break;
                                 }
-                                while self.chars.peek_any(&[' ', '\t']) {
-                                    self.chars.eat();
-                                }
-                            },
-                            _ => break,
+                            } else {
+                                // TODO: error
+                                break;
+                            }
+                            while self.chars.peek_any(&[' ', '\t']) {
+                                self.chars.eat();
+                            }
+                        } else {
+                            // TODO: error
+                            break;
                         }
                     } else {
                         break;
@@ -964,7 +980,6 @@ impl<'src> Lexer<'src> {
                     string.push(c);
                 },
             }
-            // Ignore the invalid escape sequences.
         }
 
         TokenOrTrivia::Token(Token::new(
