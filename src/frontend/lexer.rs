@@ -13,29 +13,58 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct CharStream<'src> {
     pub curr_pos: BytePos,
-
     chars: Peekable<Chars<'src>>,
+    diag: Rc<RefCell<DiagnosticEngine>>,
 }
 
 impl<'src> CharStream<'src> {
     /// Create a new Scheme character stream from a source string.
-    pub fn new(src: &'src str, start_pos: BytePos) -> Self {
+    pub fn new(
+        src: &'src str,
+        start_pos: BytePos,
+        diag: Rc<RefCell<DiagnosticEngine>>,
+    ) -> Self {
         CharStream {
             curr_pos: start_pos,
             chars: src.chars().peekable(),
+            diag,
         }
     }
 
     /// Returns and consumes the next character in the source string.
     pub fn eat(&mut self) -> Option<char> {
         let next = self.chars.next()?;
+        let mut normalized = next;
+
+        if matches!(next, '[' | '{' | ']' | '}') {
+            normalized = match next {
+                '[' | '{' => '(',
+                ']' | '}' => ')',
+                _ => unreachable!(),
+            };
+            let message = format!(
+                "invalid parentheses '{}'. Note that '[', ']' and '{{', '}}' \
+                 are not allowed in R7RS-small. Use {} instead.",
+                next, normalized
+            );
+
+            self.diag.borrow_mut().error(
+                Span::new(self.curr_pos, self.curr_pos.inc()),
+                message,
+            )
+        }
+
         self.curr_pos = self.curr_pos.offset(next.len_utf8());
-        Some(next)
+        Some(normalized)
     }
 
     /// Peeks at the next character without consuming it.
     pub fn peek(&mut self) -> Option<char> {
-        self.chars.peek().cloned()
+        self.chars.peek().map(|c| match c {
+            '[' | '{' => '(',
+            ']' | '}' => ')',
+            c => *c
+        })
     }
 
     pub fn peek_a(&mut self, c: char) -> bool {
@@ -91,9 +120,18 @@ impl Iterator for CharStream<'_> {
 mod char_stream_tests {
     use super::*;
 
+    /// Get a temporary [`CharStream`] for testing.
+    fn get_test_cs<'src>(src: &'src str) -> CharStream<'src> {
+        CharStream::new(
+            src,
+             BytePos::from_usize(0),
+             Rc::new(RefCell::new(DiagnosticEngine::new()))
+        )
+    }
+
     #[test]
     fn test_eat_char() {
-        let mut cs = CharStream::new("abc", BytePos::from_usize(0));
+        let mut cs = get_test_cs("abc");
         assert_eq!(cs.eat(), Some('a'));
         assert_eq!(cs.eat(), Some('b'));
         assert_eq!(cs.eat(), Some('c'));
@@ -102,7 +140,7 @@ mod char_stream_tests {
 
     #[test]
     fn test_peek_char() {
-        let mut cs = CharStream::new("abc", BytePos::from_usize(0));
+        let mut cs = get_test_cs("abc");
         assert_eq!(cs.peek(), Some('a'));
         assert_eq!(cs.peek(), Some('a'));
         assert_eq!(cs.eat(), Some('a'));
@@ -122,7 +160,7 @@ mod char_stream_tests {
 
     #[test]
     fn test_peek_any_char() {
-        let mut cs = CharStream::new("a", BytePos::from_usize(0));
+        let mut cs = get_test_cs("a");
 
         assert!(cs.peek_any(&['a', 'b', 'c']));
         assert!(!cs.peek_any(&['b', 'c', 'd']));
@@ -132,7 +170,7 @@ mod char_stream_tests {
 
     #[test]
     fn test_peek_that_char() {
-        let mut cs = CharStream::new("a", BytePos::from_usize(0));
+        let mut cs = get_test_cs("a");
 
         assert!(cs.peek_that(|c| c == 'a'));
         assert!(!cs.peek_that(|c| c == 'b'));
@@ -155,7 +193,7 @@ pub struct Lexer<'src> {
 impl<'src> Lexer<'src> {
     pub fn new(src: &'src str, start_pos: BytePos, diag: Rc<RefCell<DiagnosticEngine>>) -> Self {
         Lexer {
-            chars: CharStream::new(src, start_pos),
+            chars: CharStream::new(src, start_pos, diag.clone()),
             curr_span: Span::new(start_pos, start_pos),
             diag,
             cached_token: None,
@@ -439,6 +477,10 @@ mod spec {
     pub fn is_special_subsequent(c: char) -> bool {
         matches!(c, '.' | '@' | '+' | '-')
     }
+
+    pub fn is_mnemonic_escape(c: char) -> bool {
+        matches!(c, 'a'| 'b' | 't' | 'n' | 'r')
+    }
 }
 
 #[cfg(test)]
@@ -514,6 +556,8 @@ impl<'src> Lexer<'src> {
 
             // intraline-whitespace (space and tab)
             '\n' | '\r' => self.lex_line_ending(),
+
+            '|' => self.lex_identifier_with_vertical(),
 
             _ => todo!(),
         };
@@ -746,11 +790,72 @@ impl<'src> Lexer<'src> {
     ///     | initial subsequent*                              (1)
     ///     | vertical-line symbol-element* vertical-line      (2)
     ///     | peculiar-identifier                              (3)
+    /// symbol-element ::=
+    ///     | any-character-other-than-vertical-line-or-\
+    ///     | inline-hex-escape
+    ///     | mnemonic-escape
+    ///     | "\\|"
     /// ```
-    // fn lex_identifier_with_vertical(&self) -> TokenOrTrivia {
-        // self.chars.eat_a('|');
-//
-    // }
+    fn lex_identifier_with_vertical(&mut self) -> TokenOrTrivia {
+        self.chars.eat_a('|');
+        let mut ident = String::new();
+        let mut invalid_escape = false;
+        while let Some(c) = self.chars.eat() {
+            match c {
+                '|' => return {
+                    TokenOrTrivia::Token(Token::new(
+                        if invalid_escape {
+                            TokenKind::BadToken
+                        } else {
+                            TokenKind::Ident(ident)
+                        },
+                        self.take_span(),
+                    ))
+                },
+                '\\' => {
+                    match self.chars.eat() {
+                        Some('|') => ident.push('|'),
+                        Some('x') => {
+                            let mut hex = String::new();
+                            while self.chars.peek_that(|c| spec::is_digit(c, 16)) {
+                                hex.push(self.chars.eat().unwrap());
+                            }
+                            if matches!(self.chars.peek(), Some(';')) {
+                                self.chars.eat();
+                                if hex.is_empty() {
+                                    invalid_escape = true;
+                                } else {
+                                    let char = u32::from_str_radix(hex.as_str(), 16).ok().and_then(|n| {
+                                        char::from_u32(n)
+                                    });
+                                    if let Some(c) = char {
+                                        ident.push(c);
+                                    } else {
+                                        invalid_escape = true;
+                                    }
+                                }
+                            } else {
+                                invalid_escape = true;
+                            }
+                        },
+                        Some(c) if spec::is_mnemonic_escape(c) => {
+                            ident.push(spec::get_char_from_escape(c));
+                        }
+                        Some(c) => {
+                            // TODO: error
+                            invalid_escape = true;
+                        }
+                        None => break,
+                    }
+                }
+                _ => ident.push(c),
+            }
+        }
+        TokenOrTrivia::Token(Token::new(
+            TokenKind::BadToken,
+            self.take_span(),
+        ))
+    }
 
     /// Reads a number.
     fn lex_number(
