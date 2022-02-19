@@ -67,7 +67,7 @@ impl<'src> CharStream<'src> {
     pub fn eat_until<F>(&mut self, cond: F, buf: &mut String)
         where F: Fn(char) -> bool
     {
-        while !self.peek_that(cond) {
+        while !self.peek_that(&cond) {
             buf.push(self.eat().unwrap());
         }
     }
@@ -75,7 +75,7 @@ impl<'src> CharStream<'src> {
     pub fn eat_all<F>(&mut self, cond: F, buf: &mut String)
         where F: Fn(char) -> bool
     {
-        while self.peek_that(cond) {
+        while self.peek_that(&cond) {
             buf.push(self.eat().unwrap());
         }
     }
@@ -95,10 +95,7 @@ mod char_stream_tests {
 
     /// Get a temporary [`CharStream`] for testing.
     fn get_test_cs<'src>(src: &'src str) -> CharStream<'src> {
-        CharStream::new(
-            src,
-             BytePos::from_usize(0),
-        )
+        CharStream::new(src, BytePos::from_usize(0))
     }
 
     #[test]
@@ -165,7 +162,7 @@ pub struct Lexer<'src> {
 impl<'src> Lexer<'src> {
     pub fn new(src: &'src str, start_pos: BytePos, diag: Rc<RefCell<DiagnosticEngine>>) -> Self {
         Lexer {
-            chars: CharStream::new(src, start_pos, diag.clone()),
+            chars: CharStream::new(src, start_pos),
             curr_span: Span::new(start_pos, start_pos),
             diag,
             cached_token: None,
