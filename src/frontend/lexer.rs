@@ -146,6 +146,26 @@ mod char_stream_tests {
         assert_eq!(cs.eat(), Some('a'));
         assert_eq!(cs.eat(), None);
     }
+
+    #[test]
+    fn test_eat_until_char() {
+        let mut cs = get_test_cs("abc def");
+
+        let mut buf = String::new();
+        cs.eat_until(|c| c.is_whitespace(), &mut buf);
+
+        assert_eq!(buf, "abc");
+    }
+
+    #[test]
+    fn test_eat_all_char() {
+        let mut cs = get_test_cs("abc def");
+
+        let mut buf = String::new();
+        cs.eat_all(|c| c.is_ascii_alphabetic(), &mut buf);
+
+        assert_eq!(buf, "abc");
+    }
 }
 
 pub struct Lexer<'src> {
