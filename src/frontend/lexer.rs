@@ -38,36 +38,45 @@ impl<'src> CharStream<'src> {
     }
 
     pub fn peek_a(&mut self, c: char) -> bool {
-        self.peek().has_a(&c)
+        self.peek().filter(|&ch| ch == c).is_some()
     }
 
     pub fn peek_any(&mut self, chars: &[char]) -> bool {
-        self.peek().has_any(chars)
+        self.peek().filter(|c| chars.contains(c)).is_some()
     }
 
-    pub fn peek_that<F>(&mut self, cond: F) -> bool where F: Fn(char) -> bool {
-        self.peek().has_that(|&c| cond(c))
+    pub fn peek_that<F>(&mut self, cond: F) -> bool
+        where F: Fn(char) -> bool
+    {
+        self.peek().filter(|&c| cond(c)).is_some()
     }
 
-    pub fn eat_a(&mut self, c: char) {
+    pub fn eat_a(&mut self, c: char) -> char {
         let next = self.eat();
         debug_assert_eq!(next, Some(c));
+        next.unwrap()
     }
 
-    pub fn eat_any(&mut self, chars: &[char]) {
+    pub fn eat_any(&mut self, chars: &[char]) -> char {
         let next = self.eat();
         debug_assert!(matches!(next, Some(c) if chars.contains(&c)));
+        next.unwrap()
     }
 
-    pub fn eat_that<F>(&mut self, cond: F) where F: Fn(&char) -> bool {
+    pub fn eat_that<F>(&mut self, cond: F) -> char
+        where F: Fn(&char) -> bool
+    {
         let next = self.eat();
         debug_assert!(matches!(next, Some(c) if cond(&c)));
+        next.unwrap()
     }
 
+    /// Eats characters to buffer until the given condition is met or the end of
+    /// the string is reached.
     pub fn eat_until<F>(&mut self, cond: F, buf: &mut String)
         where F: Fn(char) -> bool
     {
-        while !self.peek_that(&cond) {
+        while self.peek_that(|c| !cond(c)) {
             buf.push(self.eat().unwrap());
         }
     }
@@ -544,7 +553,7 @@ impl<'src> Lexer<'src> {
             '#' => self.lex_initial_number_sign(),
             ';' => self.lex_line_comment(),
             '"' => self.lex_string(),
-            c if spec::is_initial(c) => self.lex_identifier(),
+            c if spec::is_initial(c) => self.lex_ordinary_identifier(),
             // '|' => self.lex_identifier_with_vertical(),
             '0'..='9' => self.lex_number(None, None),
 
@@ -689,8 +698,46 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    /// Read a `#|...|#`-style comment (assumes the initial "#" has already been
-    /// read).
+    /// Lexes a inline comment.
+    ///
+    /// This function only handles the first situation below:
+    ///
+    /// ```text
+    /// comment ::=
+    ///     | ";" all-subsequent-characters-up-to-a-line-ending            (1)
+    ///     | nested-comment                                               (2)
+    ///     | "#;" intertoken-space datum                                  (3)
+    /// ```
+    fn lex_line_comment(&mut self) -> TokenOrTrivia {
+        self.chars.eat_a(';');
+        self.chars.eat_until(|c| c == '\n' || c == '\r', &mut String::new());
+
+        // Handle the CR, LF, and CRLF if it doesn't reach the end.
+        if let Some(next) = self.chars.eat() {
+            debug_assert!(next == '\n' || next == '\r');
+
+            if next == '\r' && self.chars.peek_a('\n') { // Is CRLF
+                self.chars.eat();
+            }
+        }
+
+        TokenOrTrivia::Trivia(Trivia {
+            kind: TriviaKind::LineComment,
+            span: self.take_span(),
+        })
+    }
+
+    /// Read a nested (`#|...|#`-style) comment (assumes the initial "#" has
+    /// already been read).
+    ///
+    /// This function only handles the second situation below:
+    ///
+    /// ```text
+    /// comment ::=
+    ///     | ";" all-subsequent-characters-up-to-a-line-ending            (1)
+    ///     | nested-comment                                               (2)
+    ///     | "#;" intertoken-space datum                                  (3)
+    /// ```
     fn lex_nested_comment(&mut self) -> TokenOrTrivia {
         self.chars.eat_a('|');
 
@@ -721,31 +768,15 @@ impl<'src> Lexer<'src> {
         TokenOrTrivia::Token(Token::new(TokenKind::BadToken, span))
     }
 
-    fn lex_line_comment(&mut self) -> TokenOrTrivia {
-        self.chars.eat_a(';');
-        while !self.chars.peek_any(&['\n', '\r']) {
-            let newline = self.chars.eat().unwrap();
-
-            // Handle CRLF.
-            if newline == '\r' && self.chars.peek_a('\n') {
-                self.chars.eat();
-            }
-        }
-        TokenOrTrivia::Trivia(Trivia {
-            kind: TriviaKind::LineComment,
-            span: self.take_span(),
-        })
-    }
-
-    /// Lexes an identifier.
+    /// Lexes an ordinary identifier.
     ///
     /// ```text
     /// identifier ::=
-    ///     | initial subsequent*
-    ///     | vertical-line symbol-element* vertical-line
-    ///     | peculiar-identifier
+    ///     | initial subsequent*                           (1)
+    ///     | vertical-line symbol-element* vertical-line   (2)
+    ///     | peculiar-identifier                           (3)
     /// ```
-    fn lex_identifier(&mut self) -> TokenOrTrivia {
+    fn lex_ordinary_identifier(&mut self) -> TokenOrTrivia {
         let mut ident = String::new();
 
         let initial = self.chars.eat().unwrap();
