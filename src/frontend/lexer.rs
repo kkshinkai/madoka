@@ -285,7 +285,8 @@ mod spec {
     }
 
     pub fn is_unicode_identifier_body(c: char) -> bool {
-        assert!(!c.is_ascii());
+        debug_assert!(!c.is_ascii());
+
         is_unicode_identifier_head(c) || [
             GeneralCategory::DecimalNumber,        // Nd (Number, decimal digit)
             GeneralCategory::SpacingMark,          // Mc (Mark, spacing combining)
@@ -294,7 +295,8 @@ mod spec {
     }
 
     pub fn is_unicode_identifier_head(c: char) -> bool {
-        assert!(!c.is_ascii());
+        debug_assert!(!c.is_ascii());
+
         c == '\u{200C}' || c == '\u{200D}' || [
             GeneralCategory::UppercaseLetter,      // Lu (Letter, uppercase)
             GeneralCategory::LowercaseLetter,      // Ll (Letter, lowercase)
@@ -316,24 +318,23 @@ mod spec {
             GeneralCategory::ModifierSymbol,       // Sk (Symbol, modifier)
             GeneralCategory::OtherSymbol,          // So (Symbol, other)
 
-            GeneralCategory::PrivateUse, // Co (Private Use)
+            GeneralCategory::PrivateUse,           // Co (Private Use)
         ]
         .contains(&get_general_category(c))
     }
 
     pub fn is_number_prefix(c: char) -> bool {
-        [
-            'b', 'o', 'd', 'x', 'i' ,'e',
-            'B', 'O', 'D', 'X', 'I', 'E',
-        ]
-        .contains(&c)
+        matches!(c, 'b' | 'o' | 'd' | 'x' | 'i' | 'e' |
+                    'B' | 'O' | 'D' | 'X' | 'I' | 'E')
     }
 
     pub fn is_number_exactness_prefix(c: char) -> bool {
-        ['e', 'E', 'i', 'I'].contains(&c)
+        matches!(c, 'e' | 'E' | 'i' | 'I')
     }
 
     pub fn get_exactness_from_prefix(c: char) -> bool {
+        debug_assert!(is_number_exactness_prefix(c));
+
         match c {
             'e' | 'E' => true,
             'i' | 'I' => false,
@@ -342,10 +343,12 @@ mod spec {
     }
 
     pub fn is_number_radix_prefix(c: char) -> bool {
-        ['b', 'B', 'o', 'O', 'd', 'D', 'x', 'X'].contains(&c)
+        matches!(c, 'b' | 'B' | 'o' | 'O' | 'd' | 'D' | 'x' | 'X')
     }
 
     pub fn get_radix_from_prefix(c: char) -> u32 {
+        debug_assert!(is_number_radix_prefix(c));
+
         match c {
             'b' | 'B' => 2,
             'o' | 'O' => 8,
@@ -356,12 +359,14 @@ mod spec {
     }
 
     pub fn is_digit(c: char, radix: u32) -> bool {
+        debug_assert!(radix == 2 || radix == 8 || radix == 10 || radix == 16);
+
         match radix {
             2 => matches!(c, '0'..='1'),
             8 => matches!(c, '0'..='7'),
             10 => matches!(c, '0'..='9'),
             16 => matches!(c, '0'..='9' | 'a'..='f' | 'A'..='F'),
-            _ => panic!("invalid radix {}", radix),
+            _ => unreachable!(),
         }
     }
 
