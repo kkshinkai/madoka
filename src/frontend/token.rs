@@ -64,15 +64,15 @@ pub enum TokenKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Number {
-    Complex(Real, Real),
+    Complex { real: Real, image: Real },
     Real(Real),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Real {
-    Frac(u64, u64),
+    Frac { sign: i8, numer: u64, denom: u64 },
     Float(f64),
-    Int(u64),
+    Int(i64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

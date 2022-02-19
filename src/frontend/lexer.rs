@@ -9,8 +9,6 @@ use crate::{
     },
 };
 
-use self::spec::is_hex_digit;
-
 /// Streams for pre-processing UTF-8 bytes to Unicode code points.
 #[derive(Debug, Clone)]
 pub struct CharStream<'src> {
@@ -339,33 +337,21 @@ mod spec {
                     'B' | 'O' | 'D' | 'X' | 'I' | 'E')
     }
 
-    pub fn is_number_exactness_prefix(c: char) -> bool {
-        matches!(c, 'e' | 'E' | 'i' | 'I')
-    }
-
-    pub fn get_exactness_from_prefix(c: char) -> bool {
-        debug_assert!(is_number_exactness_prefix(c));
-
+    pub fn try_get_exactness(c: char) -> Option<bool> {
         match c {
-            'e' | 'E' => true,
-            'i' | 'I' => false,
-            _ => unreachable!(),
+            'e' | 'E' => Some(true),
+            'i' | 'I' => Some(false),
+            _ => None,
         }
     }
 
-    pub fn is_number_radix_prefix(c: char) -> bool {
-        matches!(c, 'b' | 'B' | 'o' | 'O' | 'd' | 'D' | 'x' | 'X')
-    }
-
-    pub fn get_radix_from_prefix(c: char) -> u32 {
-        debug_assert!(is_number_radix_prefix(c));
-
+    pub fn try_get_radix(c: char) -> Option<u32> {
         match c {
-            'b' | 'B' => 2,
-            'o' | 'O' => 8,
-            'd' | 'D' => 10,
-            'x' | 'X' => 16,
-            _ => unreachable!(),
+            'b' => Some(2),
+            'o' => Some(8),
+            'd' => Some(10),
+            'x' => Some(16),
+            _ => None,
         }
     }
 
@@ -563,7 +549,7 @@ impl<'src> Lexer<'src> {
     ///     | intraline-whitespace
     ///     | line-ending
     /// ```
-    pub fn lex_token_or_trivia(&mut self) -> Option<TokenOrTrivia> {
+    fn lex_token_or_trivia(&mut self) -> Option<TokenOrTrivia> {
         // I don't use `Option::map` here because the debugger doesn't support
         // higher-order functions well. And here is the entry point of the
         // lexer
@@ -575,13 +561,11 @@ impl<'src> Lexer<'src> {
             ';' => self.lex_line_comment(),
             '"' => self.lex_string(),
             c if spec::is_initial(c) => self.lex_ordinary_identifier(),
-            // '|' => self.lex_identifier_with_vertical(),
-            '0'..='9' => self.lex_number(None, None),
+            '|' => self.lex_vertical_line_identifier(),
+            '0'..='9' => self.lex_number_with_prefix(),
 
             // intraline-whitespace (space and tab)
             '\n' | '\r' => self.lex_line_ending(),
-
-            '|' => self.lex_identifier_with_vertical(),
 
             _ => todo!(),
         };
@@ -694,16 +678,7 @@ impl<'src> Lexer<'src> {
                 '|' => self.lex_nested_comment(),
                 '\\' => self.lex_character(),
                 c if spec::is_number_prefix(c) => {
-                    let prefix = self.chars.eat().unwrap();
-                    match prefix {
-                        'b' | 'B' => self.lex_number(Some(2), None),
-                        'o' | 'O' => self.lex_number(Some(8), None),
-                        'd' | 'D' => self.lex_number(Some(10), None),
-                        'x' | 'X' => self.lex_number(Some(16), None),
-                        'i' | 'I' => self.lex_number(None, Some(true)),
-                        'e' | 'E' => self.lex_number(None, Some(false)),
-                        _ => unreachable!(),
-                    }
+                    self.lex_number_with_prefix()
                 },
                 _ => todo!(),
             }
@@ -832,7 +807,7 @@ impl<'src> Lexer<'src> {
     ///     | mnemonic-escape
     ///     | "\\|"
     /// ```
-    fn lex_identifier_with_vertical(&mut self) -> TokenOrTrivia {
+    fn lex_vertical_line_identifier(&mut self) -> TokenOrTrivia {
         self.chars.eat_a('|');
 
         let mut ident = String::new();
@@ -922,108 +897,127 @@ impl<'src> Lexer<'src> {
         TokenOrTrivia::token(TokenKind::BadToken, span)
     }
 
-    /// Reads a number.
-    fn lex_number(
-        &mut self,
-        mut radix: Option<u32>,
-        mut exactness: Option<bool>
-    ) -> TokenOrTrivia {
-        // Read all the prefixs.
+    /// Lexes a number with prefix (assumes the initial "#" has already been
+    /// read).
+    fn lex_number_with_prefix(&mut self) -> TokenOrTrivia {
+        let c = self.chars.eat().unwrap();
+        let mut radix = spec::try_get_radix(c);
+        let mut exactness = spec::try_get_exactness(c);
+
+        // Read all the prefixes.
         while self.chars.peek_a('#') {
             self.chars.eat();
 
-            if self.chars.peek_that(spec::is_number_exactness_prefix) {
-                if exactness.is_some() {
-                    self.eat_until_delimiter(&mut String::new());
+            if let Some(c) = self.chars.peek() {
+                if let Some(e) = spec::try_get_exactness(c) {
+                    if exactness.is_some() {
+                        self.chars.eat_until(
+                            spec::is_delimiter,
+                            &mut String::new(),
+                        );
+                        let span = self.take_span();
+                        self.error_duplicate_exactness_specifier(span);
+                        return TokenOrTrivia::token(TokenKind::BadToken, span);
+                    } else {
+                        exactness = Some(e);
+                    }
+                } else if let Some(r) = spec::try_get_radix(c) {
+                    if radix.is_some() {
+                        self.chars.eat_until(
+                            spec::is_delimiter,
+                            &mut String::new(),
+                        );
+                        let span = self.take_span();
+                        self.error_duplicate_radix_specifier(span);
+                        return TokenOrTrivia::token(TokenKind::BadToken, span);
+                    } else {
+                        radix = Some(r);
+                    }
+                } else {
+                    self.chars.eat_until(
+                        spec::is_delimiter,
+                        &mut String::new()
+                    );
                     let span = self.take_span();
-                    self.error_duplicate_exactness_specifier(span);
+                    self.error_invalid_specifier(span, c);
                     return TokenOrTrivia::token(TokenKind::BadToken, span);
-                } else {
-                    exactness = Some(spec::get_exactness_from_prefix(self.chars.eat().unwrap()));
-                }
-            } else if self.chars.peek_that(spec::is_number_radix_prefix) {
-                if radix.is_some() {
-                    self.eat_until_delimiter(&mut String::new());
-                    let span = self.take_span();
-                    self.error_duplicate_radix_specifier(span);
-                    return TokenOrTrivia::Token(Token::new(
-                        TokenKind::BadToken,
-                        span,
-                    ));
-                } else {
-                    radix = Some(spec::get_radix_from_prefix(self.chars.eat().unwrap()));
                 }
             } else {
-                self.eat_until_delimiter(&mut String::new());
+                self.chars.eat_until(
+                    spec::is_delimiter,
+                    &mut String::new()
+                );
                 let span = self.take_span();
-                self.error_invalid_specifier(span);
-                return TokenOrTrivia::Token(Token::new(
-                    TokenKind::BadToken,
-                    span,
-                ));
+                self.error_empty_specifier(span);
+                return TokenOrTrivia::token(TokenKind::BadToken, span);
             }
         }
 
         let radix = radix.unwrap_or(10);
 
-        let mut number = String::new();
-        while self.chars.peek_that(|c| c.is_digit(radix)) {
-            number.push(self.chars.eat().unwrap());
-        }
 
-        if self.chars.peek_a('.') {
-            number.push(self.chars.eat().unwrap());
-
-            while self.chars.peek_that(|c| c.is_digit(radix)) {
-                number.push(self.chars.eat().unwrap());
-            }
-
-            if !self.chars.peek_that(spec::is_delimiter) {
-                while !self.chars.peek_that(spec::is_delimiter) {
-                    self.chars.eat();
-                }
-
-                return TokenOrTrivia::Token(Token::new(
-                    TokenKind::BadToken,
-                    self.take_span(),
-                ));
-            } else {
-                return TokenOrTrivia::Token(Token::new(
-                    TokenKind::Number(Number::Real(Real::Float(number.parse().unwrap()))),
-                    self.take_span(),
-                ));
-            }
-        } else if self.chars.peek_a('/') {
-            self.chars.eat();
-            let mut denominator = String::new();
-            while self.chars.peek_that(|c| c.is_digit(radix)) {
-                denominator.push(self.chars.eat().unwrap());
-            }
-
-            if !self.chars.peek_that(spec::is_delimiter) {
-                while !self.chars.peek_that(spec::is_delimiter) {
-                    self.chars.eat();
-                }
-
-                return TokenOrTrivia::Token(Token::new(
-                    TokenKind::BadToken,
-                    self.take_span(),
-                ));
-            } else {
-                return TokenOrTrivia::Token(Token::new(
-                    TokenKind::Number(Number::Real(Real::Frac(
-                        number.parse().unwrap(),
-                        denominator.parse().unwrap(),
-                    ))),
-                    self.take_span(),
-                ));
-            }
-        }
 
         TokenOrTrivia::Token(Token::new(
-            TokenKind::Number(Number::Real(Real::Int(number.parse().unwrap()))),
+            TokenKind::Number(Number::Real(Real::Int(42))),
             self.take_span(),
         ))
+    }
+
+    fn lex_complex_or_identifier(
+        &mut self,
+        radix: Option<u32>,
+        exactness: Option<bool>
+    ) -> ComplexOrIdentifier {
+        // Does the number have a prefix. If it does, then this token cannot be
+        // an identifier. For example, "+inf" is an identifier, but "#d+inf" is
+        // an incorrect number literal.
+        let has_prefix = radix.is_none() && exactness.is_none();
+
+        let mut ident = String::new();
+
+        // Default to positive.
+        let sign = 1_i8;
+
+        // Record if the symbol is seen, a complex number with no real part
+        // cannot start with a non-sign character. For example, "42i" is
+        // illegal, you should use "+42i" instead.
+        let mut sign_seen = false;
+
+        if self.chars.peek_any(&['+', '-']) {
+            let s = self.chars.eat().unwrap();
+            ident.push(s);
+
+            if s == '-' { sign = -1_i8 }
+            sign_seen = true;
+
+            // +i, -i, +inf.0, -inf.0
+            if self.chars.peek_a('i') {
+                ident.push(self.chars.eat().unwrap());
+
+                // +i, -i
+                if self.chars.peek_that(spec::is_delimiter) {
+                    return ComplexOrIdentifier::Complex(
+                        Number::Complex {
+                            real: Real::Int(0),
+                            image: Real::Int(sign as i64),
+                        }
+                    )
+                }
+
+                // +inf.0, -inf.0, or it could be an identifier.
+                else if self.chars.peek_a('n') {
+                    ident.push(self.chars.eat().unwrap());
+
+                    if self.chars.peek_a('f') {
+                        ident.push(self.chars.eat().unwrap());
+
+                        // if self.chars.peek_a('f')
+                    }
+                }
+            }
+        }
+
+        todo!()
     }
 
     fn lex_character(&mut self) -> TokenOrTrivia {
@@ -1198,10 +1192,17 @@ impl Lexer<'_> {
         );
     }
 
-    fn error_invalid_specifier(&mut self, span: Span) {
+    fn error_invalid_specifier(&mut self, span: Span, c: char) {
         self.diag.borrow_mut().error(
             span,
-            "Invalid specifier".to_string(),
+            format!("Invalid specifier #{}", c),
+        );
+    }
+
+    fn error_empty_specifier(&mut self, span: Span) {
+        self.diag.borrow_mut().error(
+            span,
+            "Empty specifier '#', do you mean '#i' or '#e'?".to_string(),
         );
     }
 
@@ -1261,4 +1262,9 @@ impl Lexer<'_> {
             "Unclosed vertical line identifier".to_string(),
         );
     }
+}
+
+enum ComplexOrIdentifier {
+    Complex(Complex),
+    Ident(String),
 }
