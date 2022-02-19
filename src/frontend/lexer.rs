@@ -9,6 +9,8 @@ use crate::{
     },
 };
 
+use self::spec::is_hex_digit;
+
 /// Streams for pre-processing UTF-8 bytes to Unicode code points.
 #[derive(Debug, Clone)]
 pub struct CharStream<'src> {
@@ -379,6 +381,10 @@ mod spec {
         }
     }
 
+    pub fn is_hex_digit(c: char) -> bool {
+        matches!(c, '0'..='9' | 'a'..='f' | 'A'..='F')
+    }
+
     pub fn is_whitespace(c: char) -> bool {
         matches!(c, '\t' | ' ' | '\n' | '\r')
     }
@@ -507,9 +513,24 @@ mod spec_tests {
     }
 }
 
-pub enum TokenOrTrivia { // Keep this private
+enum TokenOrTrivia { // Keep this private
     Token(Token),
     Trivia(Trivia),
+}
+
+impl TokenOrTrivia {
+    fn token(kind: TokenKind, span: Span) -> TokenOrTrivia {
+        TokenOrTrivia::Token(Token {
+            kind,
+            span,
+            leading_trivia: Vec::new(),
+            trailing_trivia: Vec::new(),
+        })
+    }
+
+    fn trivia(kind: TriviaKind, span: Span) -> TokenOrTrivia {
+        TokenOrTrivia::Trivia(Trivia { kind, span })
+    }
 }
 
 impl<'src> Lexer<'src> {
@@ -650,10 +671,7 @@ impl<'src> Lexer<'src> {
         while self.chars.peek_any(&[' ', '\t']) {
             self.chars.eat();
         }
-        TokenOrTrivia::Trivia(Trivia {
-            kind: TriviaKind::Whitespace,
-            span: self.take_span(),
-        })
+        TokenOrTrivia::trivia(TriviaKind::Whitespace, self.take_span())
     }
 
     /// Lexes tokens that start with `#`.
@@ -691,10 +709,7 @@ impl<'src> Lexer<'src> {
             }
         } else {
             // TBD: Is `#` a valid identifier?
-            TokenOrTrivia::Token(Token::new(
-                TokenKind::BadToken,
-                self.take_span()
-            ))
+            TokenOrTrivia::token(TokenKind::BadToken, self.take_span())
         }
     }
 
@@ -721,10 +736,7 @@ impl<'src> Lexer<'src> {
             }
         }
 
-        TokenOrTrivia::Trivia(Trivia {
-            kind: TriviaKind::LineComment,
-            span: self.take_span(),
-        })
+        TokenOrTrivia::trivia(TriviaKind::LineComment, self.take_span())
     }
 
     /// Read a nested (`#|...|#`-style) comment (assumes the initial "#" has
@@ -746,17 +758,17 @@ impl<'src> Lexer<'src> {
         while let Some(next) = self.chars.eat() {
             match next {
                 '#' if self.chars.peek_a('|') => {
-                    self.chars.eat_a('|'); // Eat '|'.
+                    self.chars.eat(); // Eat '|'.
                     nest += 1;
                 },
                 '|' if self.chars.peek_a('#') => {
-                    self.chars.eat_a('#'); // Eat '#'.
+                    self.chars.eat(); // Eat '#'.
                     nest -= 1;
                     if nest == 0 {
-                        return TokenOrTrivia::Trivia(Trivia {
-                            kind: TriviaKind::BlockComment,
-                            span: self.take_span(),
-                        });
+                        return TokenOrTrivia::trivia(
+                            TriviaKind::BlockComment,
+                            self.take_span(),
+                        );
                     }
                 },
                 _ => {},
@@ -765,10 +777,12 @@ impl<'src> Lexer<'src> {
 
         let span = self.take_span();
         self.error_unclosed_comments(span);
-        TokenOrTrivia::Token(Token::new(TokenKind::BadToken, span))
+        TokenOrTrivia::token(TokenKind::BadToken, span)
     }
 
     /// Lexes an ordinary identifier.
+    ///
+    /// This function only handles the first situation below:
     ///
     /// ```text
     /// identifier ::=
@@ -780,30 +794,27 @@ impl<'src> Lexer<'src> {
         let mut ident = String::new();
 
         let initial = self.chars.eat().unwrap();
-        assert!(spec::is_initial(initial));
+        debug_assert!(spec::is_initial(initial));
         ident.push(initial);
 
         while let Some(c) = self.chars.peek() {
-            if spec::is_delimiter(c) {
-                break;
-            } else if spec::is_subsequent(c) {
+            if spec::is_subsequent(c) {
                 ident.push(self.chars.eat().unwrap());
+            } else if spec::is_delimiter(c) {
+                break;
             } else {
                 let span = self.take_span();
                 self.error_invalid_character_in_identfier(span, c);
 
-                self.eat_until_delimiter(&mut ident);
-                return TokenOrTrivia::Token(Token::new(
+                self.chars.eat_until(spec::is_delimiter, &mut String::new());
+                return TokenOrTrivia::token(
                     TokenKind::BadToken,
                     span,
-                ));
+                );
             }
         }
 
-        TokenOrTrivia::Token(Token::new(
-            TokenKind::Ident(ident),
-            self.take_span(),
-        ))
+        TokenOrTrivia::token(TokenKind::Ident(ident), self.take_span())
     }
 
     /// Lexes identifiers that start with a vertical line.
@@ -823,63 +834,92 @@ impl<'src> Lexer<'src> {
     /// ```
     fn lex_identifier_with_vertical(&mut self) -> TokenOrTrivia {
         self.chars.eat_a('|');
+
         let mut ident = String::new();
+
+        // Set to true if an invalid escape is found.
         let mut invalid_escape = false;
-        while let Some(c) = self.chars.eat() {
-            match c {
-                '|' => return {
-                    TokenOrTrivia::Token(Token::new(
-                        if invalid_escape {
-                            TokenKind::BadToken
-                        } else {
-                            TokenKind::Ident(ident)
-                        },
-                        self.take_span(),
-                    ))
+
+        while self.chars.peek().is_some() {
+            // Save the start position for error reporting.
+            let start_pos = self.chars.curr_pos;
+
+            match self.chars.eat().unwrap() {
+                '|' => {
+                    let kind = if invalid_escape {
+                        // The error was reported when the illegal escape
+                        // sequence was first lexed, don't report it again here.
+                        TokenKind::BadToken
+                    } else {
+                        TokenKind::Ident(ident)
+                    };
+                    return TokenOrTrivia::token(kind, self.take_span());
                 },
-                '\\' => {
-                    match self.chars.eat() {
-                        Some('|') => ident.push('|'),
-                        Some('x') => {
-                            let mut hex = String::new();
-                            while self.chars.peek_that(|c| spec::is_digit(c, 16)) {
-                                hex.push(self.chars.eat().unwrap());
-                            }
-                            if matches!(self.chars.peek(), Some(';')) {
-                                self.chars.eat();
-                                if hex.is_empty() {
-                                    invalid_escape = true;
-                                } else {
-                                    let char = u32::from_str_radix(hex.as_str(), 16).ok().and_then(|n| {
-                                        char::from_u32(n)
-                                    });
-                                    if let Some(c) = char {
-                                        ident.push(c);
-                                    } else {
-                                        invalid_escape = true;
-                                    }
-                                }
-                            } else {
-                                invalid_escape = true;
-                            }
-                        },
-                        Some(c) if spec::is_mnemonic_escape(c) => {
-                            ident.push(spec::get_char_from_escape(c));
+                '\\' if self.chars.peek_a('|') => {
+                    ident.push(self.chars.eat().unwrap()); // Eat '|'.
+                }
+                '\\' if self.chars.peek_a('x') => {
+                    self.chars.eat_a('x'); // Eat 'x'.
+
+                    let mut hex = String::new();
+                    while self.chars.peek_that(spec::is_hex_digit) {
+                        hex.push(self.chars.eat().unwrap());
+                    }
+
+                    if self.chars.peek_a(';') {
+                        self.chars.eat_a(';'); // Eat ';'.
+
+                        if hex.is_empty() { // Lexed a "\x;"
+                            self.error_hex_escape_without_digits(
+                                Span::new(start_pos, self.chars.curr_pos)
+                            );
+                            invalid_escape = true;
+                            continue;
                         }
-                        Some(c) => {
-                            // TODO: error
+
+                        let char = u32::from_str_radix(hex.as_str(), 16)
+                            .ok()
+                            .and_then(|n| char::from_u32(n));
+                        if let Some(c) = char {
+                            ident.push(c);
+                        } else {
+                            self.error_invalid_hex_escape(
+                                Span::new(start_pos, self.chars.curr_pos),
+                                &hex,
+                            );
                             invalid_escape = true;
                         }
-                        None => break,
+                    } else {
+                        self.error_hex_escape_without_semicolon(
+                            Span::new(start_pos, self.chars.curr_pos),
+                            hex,
+                        );
                     }
-                }
-                _ => ident.push(c),
+                },
+                '\\' if self.chars.peek_that(spec::is_mnemonic_escape) => {
+                    let next = self.chars.eat().unwrap();
+                    ident.push(spec::get_char_from_escape(next));
+                },
+                '\\' if self.chars.peek().is_some() => {
+                    let next = self.chars.eat().unwrap();
+                    self.error_invalid_escape_sequence(
+                        Span::new(start_pos, self.chars.curr_pos),
+                        next,
+                    );
+                    invalid_escape = true;
+                },
+                '\\' => {
+                    self.error_empty_escape_sequence(
+                        Span::new(start_pos, self.chars.curr_pos)
+                    );
+                    break;
+                },
+                c => ident.push(c),
             }
         }
-        TokenOrTrivia::Token(Token::new(
-            TokenKind::BadToken,
-            self.take_span(),
-        ))
+        let span = self.take_span();
+        self.error_unclosed_vertical_line_identifier(span);
+        TokenOrTrivia::token(TokenKind::BadToken, span)
     }
 
     /// Reads a number.
@@ -897,10 +937,7 @@ impl<'src> Lexer<'src> {
                     self.eat_until_delimiter(&mut String::new());
                     let span = self.take_span();
                     self.error_duplicate_exactness_specifier(span);
-                    return TokenOrTrivia::Token(Token::new(
-                        TokenKind::BadToken,
-                        span,
-                    ));
+                    return TokenOrTrivia::token(TokenKind::BadToken, span);
                 } else {
                     exactness = Some(spec::get_exactness_from_prefix(self.chars.eat().unwrap()));
                 }
@@ -1177,6 +1214,51 @@ impl Lexer<'_> {
                 format!("'|' is not a legal character in the middle of an \
                         identifier")
             }
+        );
+    }
+
+    fn error_invalid_hex_escape(&mut self, span: Span, digit: &String) {
+        self.diag.borrow_mut().error(
+            span,
+            format!("Invalid hex escape '\\x{};'", digit),
+        );
+    }
+
+    fn error_hex_escape_without_digits(&mut self, span: Span) {
+        self.diag.borrow_mut().error(
+            span,
+            "Hex escape without digits '\\x;', do you mean '\\x0;'?"
+                .to_string(),
+        );
+    }
+
+    fn error_invalid_escape_sequence(&mut self, span: Span, c: char) {
+        self.diag.borrow_mut().error(
+            span,
+            format!("Invalid escape sequence '\\{}'", c),
+        );
+    }
+
+    fn error_empty_escape_sequence(&mut self, span: Span) {
+        self.diag.borrow_mut().error(
+            span,
+            "Empty escape sequence '\\'".to_string(),
+        );
+    }
+
+    fn error_hex_escape_without_semicolon(&mut self, span: Span, hex: String) {
+        self.diag.borrow_mut().error(
+            span,
+             format!(
+                "Hex escape without semicolon, do you mean '\\x{};'?",
+                if hex.is_empty() { "0".to_string() } else { hex }),
+        );
+    }
+
+    fn error_unclosed_vertical_line_identifier(&mut self, span: Span) {
+        self.diag.borrow_mut().error(
+            span,
+            "Unclosed vertical line identifier".to_string(),
         );
     }
 }

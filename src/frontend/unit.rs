@@ -39,16 +39,18 @@ impl CompilationUnit {
     pub fn lex_repl(&mut self, file: Rc<SourceFile>) {
         // Lex with a new diagnostic engine (not the default one).
         // This is not a good implementation.
+        let temp_diag_engine = Rc::new(RefCell::new(DiagnosticEngine::new()));
+
         let lexer = Lexer::new(
             file.src.as_str(),
             file.start_pos,
-            Rc::new(RefCell::new(DiagnosticEngine::new()))
+            temp_diag_engine.clone(),
         );
 
         let ts = lexer.collect::<Vec<_>>();
 
-        if self.diag.borrow().has_error() {
-            self.diag.borrow().emit();
+        if temp_diag_engine.borrow().has_error() {
+            temp_diag_engine.borrow().emit();
         } else {
             ts.iter().for_each(|t|
                 println!("{}", t.pretty_print(&self.files))
